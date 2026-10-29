@@ -1,0 +1,134 @@
+# Integration & security checks. Deliberately a SEPARATE workflow from any existing ci.yml
+# (lint / unit / drift / docker / deploy): it adds what those don't - real Postgres + Redis
+# with row-level security enforced, the full e2e suite, a production-boot guard check and
+# a secret scan. The "checks" job below overlaps a typical ci.yml; delete it if yours
+# already typechecks, builds and runs unit tests.
+name: Integration & security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Throwaway values for CI only. Nothing here is a real secret.
+env:
+  NODE_VERSION: "20"
+  REDIS_URL: redis://localhost:6379
+  JWT_SECRET: ci-jwt-secret-ci-jwt-secret-0123456789
+  JWT_REFRESH_SECRET: ci-refresh-secret-ci-refresh-0123456789
+  ENCRYPTION_KEY: "abababababababababababababababababababababababababababababababab"
+
+jobs:
+  # ---------------------------------------------------------------- fast checks
+  checks:
+    name: Typecheck, build, unit tests (drop if your ci.yml covers this)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "${{ env.NODE_VERSION }}", cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - name: Build packages and services
+        run: pnpm -r --filter './packages/*' --filter './services/*' build
+      - name: Typecheck everything
+        run: pnpm -r typecheck
+      # Integration suites skip themselves here (no database env) - they run in the next job.
+      - name: Unit tests
+        run: pnpm test
+
+  # ------------------------------------------- real Postgres + Redis, RLS enforced
+  integration:
+    name: Database integration + end-to-end (RLS enforced)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_PASSWORD: postgres, POSTGRES_DB: travel_platform }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      # The OWNER role migrates/seeds; the API runs as the unprivileged travel_app role,
+      # which is the only way row-level security actually applies (see docs/RLS.md).
+      OWNER_URL: postgres://postgres:postgres@localhost:5432/travel_platform
+      APP_DB_PASSWORD: ci-app-role-password-0123456789
+      RLS_TEST_ADMIN_URL: postgres://postgres:postgres@localhost:5432/travel_platform
+      RLS_TEST_APP_URL: postgres://travel_app:ci-app-role-password-0123456789@localhost:5432/travel_platform
+      # M-Pesa/Stripe left unconfigured: providers fall back to their mocks.
+      STRIPE_BILLING_WEBHOOK_SECRET: whsec_ci_only
+      RATE_LIMIT_MAX: "100000"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "${{ env.NODE_VERSION }}", cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r --filter './packages/*' --filter './services/*' --filter './apps/api-gateway' build
+
+      - name: Prepare database (extensions, migrate as owner, seed, give travel_app a login)
+        env:
+          DATABASE_URL: ${{ env.OWNER_URL }}
+          DATABASE_MIGRATION_URL: ${{ env.OWNER_URL }}
+        run: |
+          PGPASSWORD=postgres psql -h localhost -U postgres -d travel_platform -f infrastructure/docker/postgres-init/00-extensions.sql
+          pnpm db:migrate
+          pnpm db:seed
+          pnpm --filter @travel/database db:setup-app-role
+
+      - name: Database-level tests as travel_app (RLS, billing, refunds)
+        env:
+          DATABASE_URL: ${{ env.RLS_TEST_APP_URL }}
+        run: pnpm test
+
+      - name: The API refuses to boot in production with a role that bypasses RLS
+        env:
+          NODE_ENV: production
+          DATABASE_URL: ${{ env.OWNER_URL }}
+        run: |
+          set +e
+          timeout 60 node apps/api-gateway/dist/index.js > boot.log 2>&1
+          code=$?
+          cat boot.log | tail -5
+          grep -q "Row-level security is NOT enforced" boot.log || { echo "expected the RLS guard to fire"; exit 1; }
+          [ "$code" -ne 0 ] || { echo "gateway should have exited non-zero"; exit 1; }
+
+      - name: Start gateway and worker as travel_app
+        env:
+          DATABASE_URL: ${{ env.RLS_TEST_APP_URL }}
+          DATABASE_MIGRATION_URL: ${{ env.OWNER_URL }}
+        run: |
+          nohup node apps/api-gateway/dist/index.js > gateway.log 2>&1 &
+          nohup node services/notifications/dist/worker.js > worker.log 2>&1 &
+          for i in $(seq 1 40); do curl -sf localhost:4000/health && break; sleep 1; done
+          curl -sf localhost:4000/health
+          grep "Row-level security is enforced" gateway.log
+
+      - name: End-to-end tests
+        run: pnpm test:e2e
+
+      - name: Service logs on failure
+        if: failure()
+        run: |
+          echo "=== gateway ==="; tail -100 gateway.log || true
+          echo "=== worker ===";  tail -100 worker.log || true
+
+  # ----------------------------------------------------------- leaked secrets
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 } # full history: a secret deleted in a later commit is still leaked
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

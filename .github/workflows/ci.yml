@@ -1,0 +1,246 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  # Dummy values sufficient for typecheck/build/migration-generation steps,
+  # which construct the Zod env schema but never open a real connection.
+  # Never real secrets - this workflow has no access to production config.
+  DATABASE_URL: postgres://postgres:postgres@localhost:5432/travel_platform_ci
+  REDIS_URL: redis://localhost:6379
+  JWT_SECRET: ci-only-secret-not-for-production-use-00000000
+  JWT_REFRESH_SECRET: ci-only-refresh-secret-not-for-prod-00000000
+  NODE_ENV: test
+
+jobs:
+  lint-and-typecheck:
+    name: Lint & typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck all packages
+        run: pnpm -r --if-present typecheck
+
+      - name: Lint all packages
+        run: pnpm -r --if-present lint
+
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run unit tests
+        run: pnpm -r --if-present test
+
+  migration-check:
+    name: Migration check
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: travel_platform_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Enable pgcrypto (gen_random_uuid dependency)
+        run: |
+          PGPASSWORD=postgres psql -h localhost -U postgres -d travel_platform_ci \
+            -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
+
+      - name: Generate migrations from current schema
+        run: pnpm --filter @travel/database db:generate
+
+      - name: Fail if schema changes weren't committed
+        # drizzle-kit generate writes new migration files if the checked-in
+        # schema and the checked-in migrations have drifted. A clean git diff
+        # here means the committed migrations already match schema/*.ts.
+        run: |
+          if [ -n "$(git status --porcelain packages/database/src/migrations)" ]; then
+            echo "::error::Schema changes are not reflected in committed migrations. Run 'pnpm db:generate' and commit the result."
+            git status --porcelain packages/database/src/migrations
+            exit 1
+          fi
+
+      - name: Apply migrations to a clean database
+        run: pnpm --filter @travel/database db:migrate
+
+  e2e-tests:
+    name: E2E tests
+    runs-on: ubuntu-latest
+    needs: [migration-check]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: travel_platform_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      E2E_API_URL: http://localhost:4000
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Enable pgcrypto (gen_random_uuid dependency)
+        run: |
+          PGPASSWORD=postgres psql -h localhost -U postgres -d travel_platform_ci \
+            -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
+
+      - name: Migrate and seed the scratch database
+        run: |
+          pnpm --filter @travel/database db:migrate
+          pnpm --filter @travel/database db:seed
+
+      - name: Build the gateway and every service it mounts
+        run: pnpm --filter "@travel/api-gateway..." run build --if-present
+
+      - name: Start the gateway in the background
+        run: |
+          nohup node apps/api-gateway/dist/index.js > gateway.log 2>&1 &
+          echo $! > gateway.pid
+
+      - name: Wait for the gateway to become healthy
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:4000/health > /dev/null; then
+              echo "Gateway is up."
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Gateway did not become healthy in time."
+          cat gateway.log
+          exit 1
+
+      - name: Run E2E tests
+        run: pnpm --filter @travel/e2e-tests test
+
+      - name: Show gateway logs on failure
+        if: failure()
+        run: cat gateway.log || true
+
+      - name: Stop the gateway
+        if: always()
+        run: kill "$(cat gateway.pid)" 2>/dev/null || true
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: [lint-and-typecheck, unit-tests]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build all packages, services, and apps
+        run: pnpm build
+
+  security-scan:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # High/critical only - moderate-and-below findings shouldn't block
+      # every PR; track those separately (e.g. Dependabot) instead.
+      - name: Audit dependencies (high/critical)
+        run: pnpm audit --audit-level=high
+        continue-on-error: true # advisory until the finding backlog is triaged once

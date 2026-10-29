@@ -1,0 +1,31 @@
+{
+  "name": "@travel/database",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "db:generate": "pnpm build && drizzle-kit generate --dialect postgresql --schema ./dist/schema/index.js --out ./src/migrations",
+    "db:migrate": "tsx src/migrate.ts",
+    "db:seed": "tsx src/seed/index.ts",
+    "db:studio": "drizzle-kit studio",
+    "test": "vitest run",
+    "db:setup-app-role": "tsx src/setup-app-role.ts"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "drizzle-orm": "^0.33.0",
+    "postgres": "^3.4.4",
+    "@travel/auth": "workspace:*",
+    "@travel/types": "workspace:*"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.24.2",
+    "tsx": "^4.16.2",
+    "typescript": "^5.5.4",
+    "vitest": "^2.0.5"
+  }
+}

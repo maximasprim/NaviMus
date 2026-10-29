@@ -1,0 +1,79 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: travel-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: travel_platform
+    ports:
+      - "5432:5432"
+    volumes:
+      - travel_postgres_data:/var/lib/postgresql/data
+      - ./infrastructure/docker/postgres-init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: travel-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - travel_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.service
+      args:
+        SERVICE_PATH: apps/api-gateway
+    container_name: travel-api-gateway
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # The API connects as the low-privilege travel_app role (created by
+      # infrastructure/docker/postgres-init/01-dev-app-role.sql) so row-level
+      # security is actually enforced. Migrations/seeds use the owner role.
+      DATABASE_URL: postgres://travel_app:travel_app_dev_password@postgres:5432/travel_platform
+      DATABASE_MIGRATION_URL: postgres://postgres:postgres@postgres:5432/travel_platform
+      REDIS_URL: redis://redis:6379
+    ports:
+      - "4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  notifications-worker:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.worker
+      args:
+        SERVICE_PATH: services/notifications
+    container_name: travel-notifications-worker
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://travel_app:travel_app_dev_password@postgres:5432/travel_platform
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  travel_postgres_data:
+  travel_redis_data:

@@ -1,0 +1,28 @@
+{
+  "name": "travel-platform",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@9.0.0",
+  "scripts": {
+    "build": "pnpm -r --filter=./packages/* run build --if-present && pnpm -r --filter=./services/* build && pnpm -r --filter=./apps/* build",
+    "dev": "pnpm -r --parallel dev",
+    "dev:gateway": "pnpm --filter @travel/api-gateway dev",
+    "dev:web": "pnpm --filter @travel/web dev",
+    "dev:admin": "pnpm --filter @travel/admin dev",
+    "dev:partner-portal": "pnpm --filter @travel/partner-portal dev",
+    "dev:notifications": "pnpm --filter @travel/service-notifications dev",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r --filter '!@travel/e2e-tests' test",
+    "test:e2e": "pnpm --filter @travel/e2e-tests test",
+    "db:generate": "pnpm --filter @travel/database db:generate",
+    "db:migrate": "pnpm --filter @travel/database db:migrate",
+    "db:seed": "pnpm --filter @travel/database db:seed",
+    "db:studio": "pnpm --filter @travel/database db:studio",
+    "secrets:generate": "node scripts/generate-secrets.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "@types/node": "^20.14.0"
+  }
+}

@@ -1,0 +1,215 @@
+name: Deploy
+
+# Registry push is now REAL: every image builds and pushes to GitHub
+# Container Registry (ghcr.io) using the repo's built-in GITHUB_TOKEN - no
+# external registry credentials required, so that half of the pipeline
+# actually runs rather than echoing a TODO.
+#
+# What's still a documented TODO, honestly, because no hosting target is
+# configured in this repo: applying the pushed images to a live host
+# (Kubernetes/ECS/a PaaS) and running migrations against a real staging/
+# production DATABASE_URL. Both need secrets that don't exist yet - filling
+# those in (as repo/environment secrets, never hardcoded here) is what's
+# left before this workflow deploys anything end-to-end.
+#
+# Per the engineering brief: never deploy directly from a developer laptop -
+# this file exists so CI is the only path that can reach staging/production.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options: [staging, production]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAMESPACE: ${{ github.repository }}
+
+jobs:
+  build-and-push:
+    name: Build & push ${{ matrix.name }}
+    if: github.event_name == 'push' || inputs.environment != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # HTTP services - Dockerfile.service, runs dist/index.js
+          - name: api-gateway
+            path: apps/api-gateway
+            dockerfile: infrastructure/docker/Dockerfile.service
+            build_arg: SERVICE_PATH
+          - name: auth
+            path: services/auth
+            dockerfile: infrastructure/docker/Dockerfile.service
+            build_arg: SERVICE_PATH
+          - name: destinations
+            path: services/destinations
+            dockerfile: infrastructure/docker/Dockerfile.service
+            build_arg: SERVICE_PATH
+          - name: packages
+            path: services/packages
+            dockerfile: infrastructure/docker/Dockerfile.service
+            build_arg: SERVICE_PATH
+          - name: bookings
+            path: services/bookings
+            dockerfile: infrastructure/docker/Dockerfile.service
+            build_arg: SERVICE_PATH
+          - name: payments
+            path: services/payments
+            dockerfile: infrastructure/docker/Dockerfile.service
+            build_arg: SERVICE_PATH
+          - name: accommodation
+            path: services/accommodation
+            dockerfile: infrastructure/docker/Dockerfile.service
+            build_arg: SERVICE_PATH
+          - name: transport
+            path: services/transport
+            dockerfile: infrastructure/docker/Dockerfile.service
+            build_arg: SERVICE_PATH
+          - name: transfers
+            path: services/transfers
+            dockerfile: infrastructure/docker/Dockerfile.service
+            build_arg: SERVICE_PATH
+          - name: reviews
+            path: services/reviews
+            dockerfile: infrastructure/docker/Dockerfile.service
+            build_arg: SERVICE_PATH
+          - name: promotions
+            path: services/promotions
+            dockerfile: infrastructure/docker/Dockerfile.service
+            build_arg: SERVICE_PATH
+          - name: operators
+            path: services/operators
+            dockerfile: infrastructure/docker/Dockerfile.service
+            build_arg: SERVICE_PATH
+          - name: admin-service
+            path: services/admin
+            dockerfile: infrastructure/docker/Dockerfile.service
+            build_arg: SERVICE_PATH
+          - name: media
+            path: services/media
+            dockerfile: infrastructure/docker/Dockerfile.service
+            build_arg: SERVICE_PATH
+          - name: account
+            path: services/account
+            dockerfile: infrastructure/docker/Dockerfile.service
+            build_arg: SERVICE_PATH
+          # Worker - Dockerfile.worker, runs dist/worker.js
+          - name: notifications-worker
+            path: services/notifications
+            dockerfile: infrastructure/docker/Dockerfile.worker
+            build_arg: SERVICE_PATH
+          # Next.js apps - Dockerfile.nextjs, standalone output
+          - name: web
+            path: apps/web
+            dockerfile: infrastructure/docker/Dockerfile.nextjs
+            build_arg: APP_PATH
+          - name: admin
+            path: apps/admin
+            dockerfile: infrastructure/docker/Dockerfile.nextjs
+            build_arg: APP_PATH
+          - name: partner-portal
+            path: apps/partner-portal
+            dockerfile: infrastructure/docker/Dockerfile.nextjs
+            build_arg: APP_PATH
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          build-args: |
+            ${{ matrix.build_arg }}=${{ matrix.path }}
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.name }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.name }}:${{ github.ref_name }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+  deploy-staging:
+    name: Deploy to staging
+    needs: build-and-push
+    if: github.event_name == 'push' || inputs.environment == 'staging'
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      # url: https://staging.example-travel.com  # TODO once staging is provisioned
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run database migrations against staging
+        run: |
+          echo "### TODO: pnpm --filter @travel/database db:migrate against"
+          echo "### the staging DATABASE_URL, sourced from this environment's"
+          echo "### secrets (Settings > Environments > staging) - never from a"
+          echo "### value hardcoded in this file. Left as a TODO because no"
+          echo "### staging database is provisioned in this repo yet."
+        # Once a staging DATABASE_URL secret exists, replace the echo with:
+        #   run: pnpm install --frozen-lockfile && pnpm --filter @travel/database db:migrate
+        #   env:
+        #     DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+      - name: Deploy services
+        run: |
+          echo "### TODO: apply the images pushed above"
+          echo "### (${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/<service>:${{ github.sha }})"
+          echo "### to the staging target - e.g. a Kubernetes manifest update,"
+          echo "### an ECS service update, or a PaaS deploy hook. No hosting"
+          echo "### target is configured yet, so this step is intentionally a no-op."
+
+  deploy-production:
+    name: Deploy to production
+    # Deliberately depends only on build-and-push, not deploy-staging:
+    # deploy-staging's own `if` only runs on a tag push or an explicit
+    # `environment: staging` dispatch, so it's *skipped* (not failed) on a
+    # direct `environment: production` dispatch - and a job needing a
+    # skipped job is itself skipped by default, which would make
+    # production deploys silently never run. Once staging is a real,
+    # required gate, enforce it with a status check here instead of a
+    # `needs` edge (e.g. a branch-protection-style manual gate, or an
+    # explicit `if: needs.deploy-staging.result == 'success'` once
+    # deploy-staging always runs first in the intended flow).
+    needs: build-and-push
+    if: inputs.environment == 'production'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      # url: https://www.example-travel.com  # TODO once production is provisioned
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require manual approval
+        run: |
+          echo "GitHub Environments' required-reviewers protection rule is"
+          echo "the actual approval gate here - configure it on the 'production'"
+          echo "environment in repo settings. This step is just a marker."
+
+      - name: Run database migrations against production
+        run: |
+          echo "### TODO: run migrations against the production DATABASE_URL"
+          echo "### (secrets.PRODUCTION_DATABASE_URL, once that environment"
+          echo "### exists). Never run 'db:seed' here - seed data is dev/demo only."
+
+      - name: Deploy services
+        run: |
+          echo "### TODO - same as staging, against the production target,"
+          echo "### using the already-pushed :${{ github.sha }} images."

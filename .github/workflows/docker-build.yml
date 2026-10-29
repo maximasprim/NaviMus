@@ -1,0 +1,81 @@
+name: Docker build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-service-images:
+    name: Build ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # HTTP services (Dockerfile.service, runs dist/index.js)
+        service:
+          - apps/api-gateway
+          - services/auth
+          - services/destinations
+          - services/packages
+          - services/bookings
+          - services/payments
+          - services/accommodation
+          - services/transport
+          - services/transfers
+          - services/reviews
+          - services/promotions
+          - services/operators
+          - services/admin
+          - services/media
+          - services/notifications
+          - services/account
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: |
+          docker build \
+            --build-arg SERVICE_PATH=${{ matrix.service }} \
+            -f infrastructure/docker/Dockerfile.service \
+            -t travel-platform/${{ matrix.service }}:ci \
+            .
+
+  build-worker-images:
+    name: Build worker ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Queue-consuming processes (Dockerfile.worker, runs dist/worker.js)
+        service:
+          - services/notifications
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: |
+          docker build \
+            --build-arg SERVICE_PATH=${{ matrix.service }} \
+            -f infrastructure/docker/Dockerfile.worker \
+            -t travel-platform/${{ matrix.service }}:ci \
+            .
+
+  build-nextjs-apps:
+    name: Build ${{ matrix.app }} image
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [apps/web, apps/admin, apps/partner-portal]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: |
+          docker build \
+            --build-arg APP_PATH=${{ matrix.app }} \
+            -f infrastructure/docker/Dockerfile.nextjs \
+            -t travel-platform/$(basename ${{ matrix.app }}):ci \
+            .

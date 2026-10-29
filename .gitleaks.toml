@@ -1,0 +1,18 @@
+title = "travel-platform gitleaks config"
+
+[extend]
+useDefault = true
+
+# Throwaway values that exist on purpose: test/CI configuration and templates.
+[allowlist]
+description = "test fixtures and templates"
+paths = [
+  '''(^|/)\.env\.example$''',
+  '''(^|/)\.env\.[a-z-]+\.example$''',
+  '''(^|/)vitest\.config\.ts$''',
+  '''(^|/)\.github/workflows/''',
+  '''(^|/)docs/''',
+  '''\.test\.ts$''',
+  '''infrastructure/docker/postgres-init/''',
+  '''docker-compose\.dev\.yml$''',
+]

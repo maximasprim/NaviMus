@@ -1,0 +1,41 @@
+{
+  "name": "@travel/api-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "hono": "^4.5.8",
+    "@hono/node-server": "^1.12.0",
+    "ioredis": "^5.4.1",
+    "@travel/config": "workspace:*",
+    "@travel/logger": "workspace:*",
+    "@travel/http": "workspace:*",
+    "@travel/database": "workspace:*",
+    "@travel/service-auth": "workspace:*",
+    "@travel/service-destinations": "workspace:*",
+    "@travel/service-packages": "workspace:*",
+    "@travel/service-bookings": "workspace:*",
+    "@travel/service-payments": "workspace:*",
+    "@travel/service-accommodation": "workspace:*",
+    "@travel/service-transport": "workspace:*",
+    "@travel/service-transfers": "workspace:*",
+    "@travel/service-reviews": "workspace:*",
+    "@travel/service-promotions": "workspace:*",
+    "@travel/service-operators": "workspace:*",
+    "@travel/service-admin": "workspace:*",
+    "@travel/service-media": "workspace:*",
+    "@travel/service-notifications": "workspace:*",
+    "@travel/service-account": "workspace:*"
+  },
+  "devDependencies": {
+    "tsx": "^4.16.2",
+    "typescript": "^5.5.4"
+  }
+}

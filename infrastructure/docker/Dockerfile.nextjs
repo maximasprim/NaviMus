@@ -1,0 +1,43 @@
+# Multi-stage Dockerfile for the platform's Next.js apps (web, admin,
+# partner-portal). Unlike Dockerfile.service (plain Node/Hono processes),
+# this relies on Next.js's `output: "standalone"` build (see each app's
+# next.config.js) so the final image only needs the pruned, self-contained
+# .next/standalone output plus static assets - not the whole monorepo's
+# node_modules.
+#
+# Usage: docker build --build-arg APP_PATH=apps/web -f infrastructure/docker/Dockerfile.nextjs .
+
+FROM node:20-alpine AS base
+RUN corepack enable
+WORKDIR /repo
+
+FROM base AS deps
+COPY package.json pnpm-workspace.yaml ./
+COPY packages ./packages
+COPY apps ./apps
+RUN pnpm install --frozen-lockfile
+
+FROM deps AS build
+ARG APP_PATH
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN pnpm --filter "./${APP_PATH}" build
+
+FROM node:20-alpine AS runner
+ARG APP_PATH
+# ARG values are build-time only - re-exporting as ENV here is what makes
+# APP_PATH available inside the CMD shell when the container actually runs.
+ENV APP_PATH=${APP_PATH}
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+WORKDIR /app
+
+# Next.js standalone output already bundles a minimal server.js and its own
+# node_modules subset - no pnpm/monorepo context needed at runtime.
+COPY --from=build /repo/${APP_PATH}/.next/standalone ./
+COPY --from=build /repo/${APP_PATH}/.next/static ./${APP_PATH}/.next/static
+COPY --from=build /repo/${APP_PATH}/public ./${APP_PATH}/public
+
+EXPOSE 3000
+# server.js's working directory inside the standalone output is the app's
+# own path (mirroring its position in the monorepo) - cd there before start.
+CMD ["sh", "-c", "cd ${APP_PATH} && node server.js"]

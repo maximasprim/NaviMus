@@ -1,0 +1,48 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  @apply bg-sand-light text-ink font-body;
+}
+
+:focus-visible {
+  outline: 2px solid theme("colors.gold.DEFAULT");
+  outline-offset: 2px;
+}
+
+/* Quiet scrollbar for the sidebar (dark surface), instead of the chunky browser default. */
+@layer utilities {
+  .scroll-slim {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(255 255 255 / 0.18) transparent;
+  }
+  .scroll-slim::-webkit-scrollbar {
+    width: 6px;
+  }
+  .scroll-slim::-webkit-scrollbar-thumb {
+    background: rgb(255 255 255 / 0.18);
+    border-radius: 999px;
+  }
+  .scroll-slim::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  /* Same idea for the light content area. */
+  .scroll-light {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(20 35 31 / 0.25) transparent;
+  }
+  .scroll-light::-webkit-scrollbar {
+    width: 10px;
+  }
+  .scroll-light::-webkit-scrollbar-thumb {
+    background: rgb(20 35 31 / 0.22);
+    border-radius: 999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  .scroll-light::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}

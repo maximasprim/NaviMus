@@ -1,0 +1,112 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Theme variables. These are the storefront's built-in palette and fonts (space-separated RGB channels so
+ * Tailwind opacity utilities like bg-ink-horizon/90 keep working). A tenant's Admin -> Site content -> Theme
+ * choices are injected as a later :root rule by app/layout.tsx and override these; with nothing configured
+ * nothing is injected and the site looks exactly as before.
+ */
+:root {
+  color-scheme: light;
+  --c-ink: 35 31 28;
+  --c-ink-horizon: 11 50 45;
+  --c-ink-horizon-deep: 8 38 34;
+  --c-ink-horizon-mid: 18 70 61;
+  --c-ink-horizon-end: 20 80 67;
+  --c-gold: 242 169 59;
+  --c-gold-soft: 255 206 133;
+  --c-gold-deep: 201 126 18;
+  --c-acacia: 14 155 124;
+  --c-acacia-soft: 95 217 180;
+  --c-sand: 251 244 231;
+  --c-sand-light: 255 253 248;
+  --c-sand-dark: 243 226 196;
+  --c-plum: 122 59 99;
+  --c-plum-soft: 176 105 158;
+  --c-sunset: 242 84 61;
+  --c-sunset-soft: 255 148 120;
+  --ff-display: var(--font-zilla), Georgia, serif;
+  --ff-body: var(--font-inter), system-ui, sans-serif;
+}
+
+body {
+  @apply bg-sand text-ink font-body;
+}
+
+/* Visible keyboard focus everywhere - never suppressed. */
+:focus-visible {
+  outline: 2px solid theme("colors.gold.DEFAULT");
+  outline-offset: 2px;
+}
+
+/* The boarding-pass tear line used on package/booking cards. */
+.tear-line {
+  background-image: radial-gradient(circle, transparent 3px, theme("colors.sand.DEFAULT") 3.5px);
+  background-size: 14px 14px;
+  background-repeat: repeat-x;
+  background-position: center;
+  height: 2px;
+}
+.tear-line-dark {
+  background-image: radial-gradient(circle, transparent 3px, theme("colors.ink.horizon") 3.5px);
+  background-size: 14px 14px;
+  background-repeat: repeat-x;
+  background-position: center;
+  height: 2px;
+}
+
+/* Hand-drawn dashed route line, animated to draw itself on load. */
+.route-line {
+  stroke-dasharray: 6 6;
+  stroke-dashoffset: 1000;
+  animation: draw-route 2.4s ease-out forwards;
+}
+
+@keyframes draw-route {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .route-line {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* A soft field of dots used behind hero/CTA sections - a wayfinding
+   map texture rather than a generic gradient wash. */
+.map-dots {
+  background-image: radial-gradient(circle, rgb(var(--c-sand) / 0.14) 1px, transparent 1.5px);
+  background-size: 22px 22px;
+}
+
+/* Punched-hole edge for the "boarding pass" summary cards, replacing a
+   plain rounded corner with something that reads as a ticket stub. */
+.stub-notch {
+  position: relative;
+}
+.stub-notch::before,
+.stub-notch::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  background: theme("colors.sand.light");
+  border-radius: 9999px;
+  transform: translateY(-50%);
+}
+.stub-notch::before {
+  left: -8px;
+}
+.stub-notch::after {
+  right: -8px;
+}
