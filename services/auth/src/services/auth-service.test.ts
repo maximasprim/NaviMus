@@ -123,3 +123,96 @@ describe("sessions: theft and revocation", () => {
     expect([...tokens.rows.values()].every((r) => r.revokedAt)).toBe(true);
   });
 });
+
+describe("adminLogin: sign in to the admin console without naming a tenant", () => {
+  type Cand = { user: any; tenant: { id: string; slug: string; name: string; status: string }; roles: string[] };
+
+  async function cand(over: { id: string; slug: string; roles: string[]; password?: string; userStatus?: string; tenantStatus?: string; email?: string }): Promise<Cand> {
+    return {
+      user: {
+        id: over.id,
+        tenantId: `t-${over.slug}`,
+        email: over.email ?? "boss@x.test",
+        status: over.userStatus ?? "active",
+        passwordHash: await hashPassword(over.password ?? "Correct-Horse-9"),
+      },
+      tenant: { id: `t-${over.slug}`, slug: over.slug, name: over.slug.toUpperCase(), status: over.tenantStatus ?? "active" },
+      roles: over.roles,
+    };
+  }
+
+  function build(cands: Cand[]) {
+    const users: any = {
+      findAllByEmailWithTenant: async (email: string) => cands.filter((c) => c.user.email === email).map(({ user, tenant }) => ({ user, tenant })),
+      getRolesAndPermissions: async (id: string) => ({ roles: cands.find((c) => c.user.id === id)!.roles, permissions: [] }),
+    };
+    return new AuthService(users, { publish: async () => undefined } as any, makeTokenRepo() as any);
+  }
+  const input = (extra: object = {}) => ({ email: "boss@x.test", password: "Correct-Horse-9", ...extra });
+
+  it("signs a platform admin in and reports the default tenant + isPlatformAdmin", async () => {
+    const svc = build([await cand({ id: "u1", slug: "default", roles: ["super_admin"] })]);
+    const r = await svc.adminLogin(input());
+    expect(r.isPlatformAdmin).toBe(true);
+    expect(r.tenant.slug).toBe("default");
+    expect(decodeJwt(r.tokens.accessToken)).toMatchObject({ sub: "u1", tenantId: "t-default" });
+  });
+
+  it("signs a tenant admin in and reports THEIR tenant, not the platform's", async () => {
+    const svc = build([await cand({ id: "u2", slug: "acme", roles: ["admin"] })]);
+    const r = await svc.adminLogin(input());
+    expect(r.isPlatformAdmin).toBe(false);
+    expect(r.tenant.slug).toBe("acme");
+  });
+
+  it("gives the SAME generic error for unknown email, wrong password and non-staff accounts", async () => {
+    const svc = build([
+      await cand({ id: "u3", slug: "acme", roles: ["admin"] }),
+      await cand({ id: "u4", slug: "acme", roles: ["customer"], email: "cust@x.test" }),
+    ]);
+    const msg = /Invalid email or password/;
+    await expect(svc.adminLogin(input({ email: "nobody@x.test" }))).rejects.toThrow(msg);
+    await expect(svc.adminLogin(input({ password: "wrong" }))).rejects.toThrow(msg);
+    await expect(svc.adminLogin(input({ email: "cust@x.test" }))).rejects.toThrow(msg); // right password, but a customer
+  });
+
+  it("refuses a suspended tenant's admin, but never a platform admin", async () => {
+    const suspended = build([await cand({ id: "u5", slug: "acme", roles: ["admin"], tenantStatus: "suspended" })]);
+    await expect(suspended.adminLogin(input())).rejects.toThrow(/suspended/i);
+    const platform = build([await cand({ id: "u6", slug: "default", roles: ["super_admin"], tenantStatus: "suspended" })]);
+    await expect(platform.adminLogin(input())).resolves.toBeTruthy();
+  });
+
+  it("refuses an inactive account", async () => {
+    const svc = build([await cand({ id: "u7", slug: "acme", roles: ["admin"], userStatus: "suspended" })]);
+    await expect(svc.adminLogin(input())).rejects.toThrow(/not active/i);
+  });
+
+  it("same email+password as staff in two tenants: asks for the workspace, then honours it", async () => {
+    const svc = build([
+      await cand({ id: "a", slug: "acme", roles: ["admin"] }),
+      await cand({ id: "b", slug: "globex", roles: ["admin"] }),
+    ]);
+    await expect(svc.adminLogin(input())).rejects.toMatchObject({ code: "WORKSPACE_REQUIRED" });
+    const r = await svc.adminLogin(input({ workspace: "globex" }));
+    expect(r.tenant.slug).toBe("globex");
+  });
+
+  it("only the matching password counts when the same email is staff in two tenants", async () => {
+    const svc = build([
+      await cand({ id: "a", slug: "acme", roles: ["admin"], password: "Other-Passw0rd-1" }),
+      await cand({ id: "b", slug: "globex", roles: ["admin"] }),
+    ]);
+    const r = await svc.adminLogin(input()); // password only matches globex, so no ambiguity
+    expect(r.tenant.slug).toBe("globex");
+  });
+
+  it("a super_admin match wins over a tenant-admin match for the same credentials", async () => {
+    const svc = build([
+      await cand({ id: "a", slug: "acme", roles: ["admin"] }),
+      await cand({ id: "p", slug: "default", roles: ["super_admin"] }),
+    ]);
+    const r = await svc.adminLogin(input());
+    expect(r.isPlatformAdmin).toBe(true);
+  });
+});

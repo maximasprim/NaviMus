@@ -39,7 +39,7 @@ pnpm dev:web              # http://localhost:3000   (also dev:admin, dev:partner
 ```
 
 Each Next app needs a `.env.local` - copy `.env.local.example` (browser-visible values only, never secrets).
-The seed creates two demo tenants (`default`, `acme-travel-demo`) and demo users (listed in the seed's output), all with the demo password `Test-Passw0rd!`. **Never run the seed against a production database.**
+The seed creates two demo tenants (`default`, `enroute-travel-demo`) and four demo users (listed in the seed's output; their credentials are defined in `SEED_ACCOUNTS` in `packages/database/src/seed/index.ts`): the super admin `admin@navimus.co.ke`, an operator, a customer, and the test-tenant admin `admin@enroute.co.ke`. **Never run the seed against a production database.** See `docs/SEED_DATA.md` for the full account list, what the expanded demo dataset contains, and the `db:reset` / `db:reseed` commands.
 
 ## How the important things work
 

@@ -20,7 +20,7 @@ export interface EditorProps {
 export function PageShell({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-full bg-canvas">
-      <div className="mx-auto max-w-[1200px] px-6 py-8 lg:px-10 lg:py-10">{children}</div>
+      <div className="mx-auto max-w-8xl px-2 py-3 lg:px-3 lg:py-4">{children}</div>
     </div>
   );
 }
@@ -31,7 +31,7 @@ export function PageSkeleton() {
       <div role="status" aria-live="polite">
         <span className="sr-only">Loading site content…</span>
         <div className="h-8 w-48 rounded-lg bg-hairline/60 motion-safe:animate-pulse" aria-hidden />
-        <div className="mt-8 h-96 max-w-3xl rounded-2xl bg-hairline/60 motion-safe:animate-pulse" aria-hidden />
+        <div className="mt-8 h-96 max-w-8xl rounded-2xl bg-hairline/60 motion-safe:animate-pulse" aria-hidden />
       </div>
     </PageShell>
   );

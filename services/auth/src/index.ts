@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { serve } from "@hono/node-server";
 import { env } from "@travel/config";
 import { createServiceLogger } from "@travel/logger";
-import { createDb } from "@travel/database";
+import { createDb, runInBypassContext } from "@travel/database";
 import { EventPublisher } from "@travel/events";
 import { buildErrorHandler, requestIdMiddleware, ok } from "@travel/http";
 import { RefreshTokenRepository } from "./repositories/refresh-token-repository.js";
@@ -23,7 +23,7 @@ app.onError(buildErrorHandler());
 
 app.get("/health", (c) => ok(c, { status: "ok", service: "auth" }));
 app.get("/ready", (c) => ok(c, { status: "ready" }));
-app.route("/", buildAuthRoutes(authService, userRepository));
+app.route("/", buildAuthRoutes(authService, userRepository, (fn) => runInBypassContext(db, fn)));
 
 // Only boot an HTTP listener when run standalone; when mounted into
 // the gateway, the gateway process owns the listener instead.

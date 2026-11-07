@@ -264,12 +264,25 @@ export interface Operator {
   createdAt: string;
 }
 
-export async function login(input: { email: string; password: string; workspace: string }) {
-  const { workspace, ...credentials } = input;
-  const { data } = await apiFetch<{ authenticated: boolean }>("/api/v1/auth/login", {
+export interface AdminLoginResult {
+  authenticated: boolean;
+  /** The tenant this account belongs to (the platform's own "default" tenant for a platform admin). */
+  tenant: { id: string; slug: string; name: string };
+  roles: string[];
+  isPlatformAdmin: boolean;
+}
+
+/**
+ * Admin sign-in. The person gives only email + password: the API finds the account and
+ * says which tenant and role it is. `workspace` is sent only in the rare case the API
+ * asked for it (one email managing several workspaces).
+ */
+export async function login(input: { email: string; password: string; workspace?: string }) {
+  const workspace = input.workspace?.trim().toLowerCase();
+  const { data } = await apiFetch<AdminLoginResult>("/api/v1/auth/admin-login", {
     method: "POST",
-    body: credentials,
-    tenantSlug: workspace.trim().toLowerCase(),
+    body: { email: input.email, password: input.password, ...(workspace ? { workspace } : {}) },
+    includeTenant: false, // no tenant is named at sign-in; the server works it out
   });
   return data;
 }

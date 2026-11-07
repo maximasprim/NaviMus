@@ -127,14 +127,23 @@ app.use(
 // PaymentService.handleWebhook discovers the tenant itself from the
 // payment record via findByProviderReference, and this bypass is what
 // stops tenantContext 404ing the callback before it gets there.
+// Paths with no single tenant to resolve. /api/v1/auth/admin-login is the admin
+// console's sign-in: the person does not name a tenant, the auth service finds the
+// account by email (under an explicit bypass-RLS context) and reports its tenant.
+const isTenantless = (path: string) =>
+  path.startsWith("/api/v1/platform/") ||
+  path.startsWith("/api/v1/signup/") ||
+  path === "/api/v1/auth/admin-login" ||
+  path.includes("/webhooks/");
+
+// A cross-tenant credential endpoint is a prime credential-stuffing target: give it
+// its own tighter budget on top of the general one (same approach as signup above).
+app.use("/api/v1/auth/admin-login", (c, next) =>
+  rateLimit(redis, { windowMs: env.RATE_LIMIT_WINDOW_MS, max: Math.max(5, Math.floor(env.RATE_LIMIT_MAX / 10)), keyPrefix: "gw-admin-login" })(c, next)
+);
+
 app.use("/api/*", async (c, next) => {
-  if (
-    c.req.path.startsWith("/api/v1/platform/") ||
-    c.req.path.startsWith("/api/v1/signup/") ||
-    c.req.path.includes("/webhooks/")
-  ) {
-    return next();
-  }
+  if (isTenantless(c.req.path)) return next();
   return tenantContext(resolveTenant)(c, next);
 });
 
@@ -150,13 +159,7 @@ app.use("*", accessLog(logger));
 // doc comment in @travel/config for why this exists alongside, not
 // instead of, the per-user/IP limiter above.
 app.use("/api/*", async (c, next) => {
-  if (
-    c.req.path.startsWith("/api/v1/platform/") ||
-    c.req.path.startsWith("/api/v1/signup/") ||
-    c.req.path.includes("/webhooks/")
-  ) {
-    return next();
-  }
+  if (isTenantless(c.req.path)) return next();
   return rateLimit(redis, {
     windowMs: env.RATE_LIMIT_WINDOW_MS,
     max: env.RATE_LIMIT_TENANT_MAX ?? env.RATE_LIMIT_MAX * 20,

@@ -1,6 +1,7 @@
 import "../load-env.js";
 import { createDb, eq, schema } from "../client.js";
 import { hashPassword } from "@travel/auth";
+import { EXTRA_PASSWORDS, seedDemoData } from "./demo/index.js";
 
 /**
  * Demo/dev seed data. Uses clearly fictional operators and
@@ -10,9 +11,11 @@ import { hashPassword } from "@travel/auth";
  * loud, not silent.
  */
 async function main() {
-  const connectionString = process.env.DATABASE_URL;
+  // Seeding must run as the schema OWNER: the low-privilege app role is subject to row-level security
+  // and cannot insert tenants/users without a tenant context (README: "migrate + seed as the OWNER role").
+  const connectionString = process.env.DATABASE_MIGRATION_URL || process.env.DATABASE_URL;
   if (!connectionString) {
-    console.error("DATABASE_URL is required to seed");
+    console.error("DATABASE_MIGRATION_URL (or DATABASE_URL) is required to seed");
     process.exit(1);
   }
   const db = createDb(connectionString);
@@ -74,6 +77,27 @@ async function main() {
     permissionRows.map((p) => ({ roleId: superAdmin.id, permissionId: p.id }))
   );
 
+  // Every other role gets the permissions its job needs, so the staff roles seeded below are usable out of the box.
+  const permissionByCode = new Map(permissionRows.map((p) => [p.code, p.id]));
+  const grants: Record<string, string[]> = {
+    admin: permissionCodes,
+    travel_manager: ["booking:view", "booking:cancel", "report:view", "destination:create", "destination:update"],
+    destination_manager: ["destination:create", "destination:update", "destination:delete"],
+    finance_manager: ["booking:view", "payment:view", "payment:refund", "report:view"],
+    customer_support: ["booking:view", "booking:cancel", "support:manage"],
+    marketing_manager: ["report:view", "destination:update"],
+    tour_operator: ["booking:view"],
+    accommodation_provider: ["booking:view"],
+    transport_provider: ["booking:view"],
+    tour_guide: ["booking:view"],
+  };
+  await db.insert(schema.rolePermissions).values(
+    Object.entries(grants).flatMap(([roleName, codes]) => {
+      const role = roleRows.find((r) => r.name === roleName)!;
+      return codes.map((code) => ({ roleId: role.id, permissionId: permissionByCode.get(code)! }));
+    })
+  );
+
   console.log("Seeding countries/regions/cities...");
   const [kenya, tanzania, uganda, rwanda, southAfrica, uae, egypt] = await db
     .insert(schema.countries)
@@ -133,7 +157,7 @@ async function main() {
         businessName: "Rift Valley Safaris (Demo)",
         slug: "rift-valley-safaris-demo",
         status: "approved",
-        contactEmail: "ops@example-riftvalley-demo.test",
+        contactEmail: "ops@navimus.co.ke",
         contactPhone: "+254700000000",
         countryId: kenya!.id,
         description: "Fictional demo operator used for seed/dev data only.",
@@ -283,28 +307,39 @@ async function main() {
   ]);
 
   console.log("Seeding test accounts (fictional credentials, dev/CI only)...");
-  const testPasswordHash = await hashPassword("Test-Passw0rd!");
+  // Dev/CI seed accounts. Each account has its own password. NEVER run this seed
+  // against a production database (these credentials live in source control).
+  const SEED_ACCOUNTS = {
+    superAdmin: { email: "admin@navimus.co.ke", password: "@0743493619Nn" }, // super_admin (default tenant, crosses every tenant)
+    operator: { email: "operator@navimus.co.ke", password: "@0743493619Oo" }, // tour_operator (default tenant)
+    customer: { email: "customer@navimus.co.ke", password: "@0743493619Cc" }, // customer (default tenant)
+    testTenantAdmin: { email: "admin@enroute.co.ke", password: "@0743493619Ee" }, // admin/owner of the second (test) tenant
+  } as const;
+  const superAdminHash = await hashPassword(SEED_ACCOUNTS.superAdmin.password);
+  const operatorHash = await hashPassword(SEED_ACCOUNTS.operator.password);
+  const customerHash = await hashPassword(SEED_ACCOUNTS.customer.password);
+  const testTenantAdminHash = await hashPassword(SEED_ACCOUNTS.testTenantAdmin.password);
 
   const [testAdmin, testOperatorUser, testCustomer] = await db
     .insert(schema.users)
     .values([
       {
-        email: "admin@example-travel-demo.test",
-        passwordHash: testPasswordHash,
+        email: SEED_ACCOUNTS.superAdmin.email,
+        passwordHash: superAdminHash,
         firstName: "Demo",
         lastName: "Admin",
         status: "active",
       },
       {
-        email: "operator@example-travel-demo.test",
-        passwordHash: testPasswordHash,
+        email: SEED_ACCOUNTS.operator.email,
+        passwordHash: operatorHash,
         firstName: "Demo",
         lastName: "Operator",
         status: "active",
       },
       {
-        email: "customer@example-travel-demo.test",
-        passwordHash: testPasswordHash,
+        email: SEED_ACCOUNTS.customer.email,
+        passwordHash: customerHash,
         firstName: "Demo",
         lastName: "Customer",
         status: "active",
@@ -323,7 +358,7 @@ async function main() {
   ]);
 
   // Link the operator test user as staff of the demo operator so
-  // "operator@example-travel-demo.test" can sign into the Partner
+  // the operator seed account can sign into the Partner
   // Portal and see the demo operator's own packages/bookings/earnings.
   await db.insert(schema.operatorUsers).values({
     operatorId: demoOperator!.id,
@@ -454,47 +489,47 @@ async function main() {
   console.log("Seeding a second tenant, to demonstrate isolation...");
   const [secondTenant] = await db
     .insert(schema.tenants)
-    .values({ name: "Acme Travel Co (Demo)", slug: "acme-travel-demo", status: "active", planId: starterPlan!.id })
+    .values({ name: "Enroute Travel Co (Demo)", slug: "enroute-travel-demo", status: "active", planId: starterPlan!.id })
     .returning();
 
-  const [acmeCategory] = await db
+  const [enrouteCategory] = await db
     .insert(schema.destinationCategories)
     .values({ tenantId: secondTenant!.id, name: "Beaches & Coastal", slug: "beaches-coastal" })
     .returning();
 
-  const [acmeOperator] = await db
+  const [enrouteOperator] = await db
     .insert(schema.operators)
     .values({
       tenantId: secondTenant!.id,
-      businessName: "Acme Coastal Escapes (Demo)",
-      slug: "acme-coastal-escapes-demo",
+      businessName: "Enroute Coastal Escapes (Demo)",
+      slug: "enroute-coastal-escapes-demo",
       status: "approved",
-      contactEmail: "ops@example-acme-demo.test",
+      contactEmail: "ops@enroute.co.ke",
       countryId: kenya!.id,
       description: "Fictional demo operator for the second seeded tenant, used to prove tenant isolation.",
     })
     .returning();
 
-  const [acmeDestination] = await db
+  const [enrouteDestination] = await db
     .insert(schema.destinations)
     .values({
       tenantId: secondTenant!.id,
       cityId: dianiCity.id, // shared geography - same real city, different tenant's own destination listing for it
-      categoryId: acmeCategory!.id,
+      categoryId: enrouteCategory!.id,
       name: "Diani Beach",
       slug: "diani-beach", // safe to reuse - destinations' unique index is (tenantId, cityId, slug), scoped per tenant
-      shortDescription: "Acme's own Diani Beach listing - separate from the default tenant's.",
+      shortDescription: "Enroute's own Diani Beach listing - separate from the default tenant's.",
       description: "Demo seed content - replace with real editorial copy.",
       status: "published",
       verified: true,
     })
     .returning();
 
-  const [acmePackage] = await db
+  const [enroutePackage] = await db
     .insert(schema.packages)
     .values({
       tenantId: secondTenant!.id,
-      operatorId: acmeOperator!.id,
+      operatorId: enrouteOperator!.id,
       name: "Diani Beach Weekend Getaway (Demo)",
       slug: "diani-beach-weekend-getaway-demo",
       type: "beach_holiday",
@@ -510,63 +545,72 @@ async function main() {
     .returning();
 
   await db.insert(schema.packageDestinations).values({
-    packageId: acmePackage!.id,
-    destinationId: acmeDestination!.id,
+    packageId: enroutePackage!.id,
+    destinationId: enrouteDestination!.id,
     sequenceOrder: 0,
   });
   await db.insert(schema.packagePrices).values([
-    { packageId: acmePackage!.id, travelerType: "adult", pricingType: "individual", amount: "420.00", currency: "USD" },
+    { packageId: enroutePackage!.id, travelerType: "adult", pricingType: "individual", amount: "420.00", currency: "USD" },
   ]);
 
-  const [acmeAdmin] = await db
+  const [enrouteAdmin] = await db
     .insert(schema.users)
     .values({
       tenantId: secondTenant!.id,
-      email: "admin@example-acme-demo.test",
-      passwordHash: testPasswordHash,
-      firstName: "Acme",
+      email: SEED_ACCOUNTS.testTenantAdmin.email,
+      passwordHash: testTenantAdminHash,
+      firstName: "Enroute",
       lastName: "Admin",
       status: "active",
     })
     .returning();
   const adminRole = roleRows.find((r) => r.name === "admin")!;
-  await db.insert(schema.userRoles).values({ userId: acmeAdmin!.id, roleId: adminRole.id });
-  await db.update(schema.tenants).set({ ownerUserId: acmeAdmin!.id }).where(eq(schema.tenants.id, secondTenant!.id));
+  await db.insert(schema.userRoles).values({ userId: enrouteAdmin!.id, roleId: adminRole.id });
+  await db.update(schema.tenants).set({ ownerUserId: enrouteAdmin!.id }).where(eq(schema.tenants.id, secondTenant!.id));
 
-  // A couple of Acme-specific templates, deliberately different in tone
+  // A couple of Enroute-specific templates, deliberately different in tone
   // and branding from the default tenant's - this is what proves the
   // notification-template resolution actually works per tenant (see
   // services/notifications/src/templates.ts's own-tenant -> default-
-  // tenant fallback): Acme customers get Acme's own copy for these two
+  // tenant fallback): Enroute customers get Enroute's own copy for these two
   // keys, and silently fall back to the default tenant's copy for every
-  // other template Acme hasn't customized (payment.failed,
+  // other template Enroute hasn't customized (payment.failed,
   // booking.cancelled, refund.completed, etc.) - both behaviors are
   // demonstrated by seeding only a subset here, not the full set.
-  console.log("Seeding Acme-specific notification templates (demonstrating per-tenant customization)...");
+  console.log("Seeding Enroute-specific notification templates (demonstrating per-tenant customization)...");
   await db.insert(schema.notificationTemplates).values([
     {
       tenantId: secondTenant!.id,
       key: "booking.created",
       channel: "email",
       locale: "en",
-      subject: "Your Acme Coastal Escapes booking is in! - {{bookingId}}",
+      subject: "Your Enroute Coastal Escapes booking is in! - {{bookingId}}",
       bodyTemplate:
-        "<p>Karibu! Your Diani getaway for {{travelDate}} is reserved with Acme Coastal Escapes and pending payment.</p><p>Total due: {{currency}} {{totalAmount}}.</p><p>Booking reference: {{bookingId}}</p>",
+        "<p>Karibu! Your Diani getaway for {{travelDate}} is reserved with Enroute Coastal Escapes and pending payment.</p><p>Total due: {{currency}} {{totalAmount}}.</p><p>Booking reference: {{bookingId}}</p>",
     },
     {
       tenantId: secondTenant!.id,
       key: "booking.confirmed",
       channel: "sms",
       locale: "en",
-      bodyTemplate: "Acme Coastal Escapes: booking {{bookingId}} confirmed! See you on the coast.",
+      bodyTemplate: "Enroute Coastal Escapes: booking {{bookingId}} confirmed! See you on the coast.",
     },
   ]);
 
-  console.log("Test accounts (password for all: Test-Passw0rd!):");
-  console.log("  admin@example-travel-demo.test    - super_admin (default tenant, but crosses every tenant)");
-  console.log("  operator@example-travel-demo.test - tour_operator, staff of the demo operator (default tenant)");
-  console.log("  customer@example-travel-demo.test - customer (default tenant)");
-  console.log("  admin@example-acme-demo.test      - admin, owner of the second seeded tenant (Acme Travel Co)");
+  const demo = await seedDemoData(db);
+
+  console.log("");
+  console.log("Demo data created:");
+  console.log(`  default tenant : ${demo.default.operators} operators, ${demo.default.destinations} destinations, ${demo.default.packages} packages, ${demo.default.accommodations} accommodations`);
+  console.log(`  Enroute tenant : ${demo.enroute.operators} operators, ${demo.enroute.destinations} destinations, ${demo.enroute.packages} packages, ${demo.enroute.accommodations} accommodations`);
+  console.log(`  ${demo.customers} customers, ${demo.staff} staff/operator users, ${demo.bookings} bookings (every status), ${demo.reviews} reviews`);
+  console.log("");
+  console.log("Test accounts (dev/CI only - passwords are defined in SEED_ACCOUNTS in this file and EXTRA_PASSWORDS in seed/demo/people.ts):");
+  console.log(`  ${SEED_ACCOUNTS.superAdmin.email.padEnd(26)} - super_admin (default tenant, but crosses every tenant)`);
+  console.log(`  ${SEED_ACCOUNTS.operator.email.padEnd(26)} - tour_operator, staff of the demo operator (default tenant)`);
+  console.log(`  ${SEED_ACCOUNTS.customer.email.padEnd(26)} - customer (default tenant)`);
+  console.log(`  ${SEED_ACCOUNTS.testTenantAdmin.email.padEnd(26)} - admin, owner of the second seeded tenant (Enroute Travel Co)`);
+  console.log(`  other staff/operator accounts use password ${EXTRA_PASSWORDS.staff} (staff) / ${EXTRA_PASSWORDS.operator} (operators); extra customers use ${EXTRA_PASSWORDS.customer}`);
   process.exit(0);
 }
 

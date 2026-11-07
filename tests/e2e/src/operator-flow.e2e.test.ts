@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { apiRequest, waitForGateway } from "./client.js";
-import { SEED_OPERATOR_EMAIL, loginAs } from "./fixtures.js";
+import { SEED_CUSTOMER_EMAIL, SEED_OPERATOR_EMAIL, loginAs } from "./fixtures.js";
 
 describe("operator self-service", () => {
   let token: string;
@@ -43,7 +43,7 @@ describe("operator self-service", () => {
   });
 
   it("blocks a plain customer from operator-only routes", async () => {
-    const customerToken = await loginAs("customer@example-travel-demo.test");
+    const customerToken = await loginAs(SEED_CUSTOMER_EMAIL);
 
     const res = await apiRequest("/api/v1/packages", {
       method: "POST",

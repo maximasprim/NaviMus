@@ -58,12 +58,30 @@ export function setSessionMarker(): void {
 }
 
 const WORKSPACE_KEY = "travel_admin_workspace";
+const PLATFORM_KEY = "travel_admin_is_platform";
 const LAST_WORKSPACE_KEY = "travel_admin_last_workspace";
 const SELECTED_TENANT_KEY = "travel_admin_selected_tenant"; // same key tenant-session.ts uses
 
 export function getWorkspace(): string | null {
   if (typeof window === "undefined") return null;
   try { return window.localStorage.getItem(WORKSPACE_KEY); } catch { return null; }
+}
+
+/** Recorded at sign-in from the server's answer. Not a credential: the API still enforces every role. */
+export function setIsPlatformAdmin(value: boolean): void {
+  if (typeof window === "undefined") return;
+  try { window.localStorage.setItem(PLATFORM_KEY, value ? "1" : "0"); } catch { /* storage unavailable */ }
+}
+
+/** null = unknown (e.g. signed in before this existed). */
+export function getIsPlatformAdmin(): boolean | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const v = window.localStorage.getItem(PLATFORM_KEY);
+    return v === null ? null : v === "1";
+  } catch {
+    return null;
+  }
 }
 
 export function getLastWorkspace(): string | null {
@@ -82,5 +100,6 @@ export function clearSessionMarker(): void {
   window.localStorage.removeItem(MARKER_KEY);
   window.localStorage.removeItem(SELECTED_TENANT_KEY); // new: stale tenant caused the login failure
   window.localStorage.removeItem(WORKSPACE_KEY);       // new
+  window.localStorage.removeItem(PLATFORM_KEY);
   writeHintCookie("", 0);
 }

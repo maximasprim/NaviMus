@@ -18,6 +18,29 @@ export class UserRepository {
   }
 
   /**
+   * Every non-deleted account with this email, in ANY tenant, with the tenant it
+   * belongs to. Only for admin-console sign-in, where the person does not say which
+   * tenant they are in. Cross-tenant by design, so it must run in a bypass-RLS
+   * context (see the /admin-login route) and its callers must authenticate the
+   * password before revealing anything about the result.
+   */
+  async findAllByEmailWithTenant(email: string) {
+    return this.db
+      .select({
+        user: schema.users,
+        tenant: {
+          id: schema.tenants.id,
+          slug: schema.tenants.slug,
+          name: schema.tenants.name,
+          status: schema.tenants.status,
+        },
+      })
+      .from(schema.users)
+      .innerJoin(schema.tenants, eq(schema.users.tenantId, schema.tenants.id))
+      .where(and(eq(schema.users.email, email), isNull(schema.users.deletedAt), isNull(schema.tenants.deletedAt)));
+  }
+
+  /**
    * Looks up by id alone (no tenant filter) - used for self-lookups (/me,
    * refresh) where the caller's own token.sub already scopes identity, and
    * ids are globally unique UUIDs so there's no cross-tenant ambiguity to

@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import {
+  adminLoginSchema,
   loginSchema,
   refreshTokenSchema,
   registerSchema,
@@ -25,7 +26,10 @@ const adminSetUserRoleSchema = z.object({ role: z.string().min(1) });
 
 const bodyTokenSchema = z.object({ refreshToken: z.string().min(1).optional() });
 
-export function buildAuthRoutes(authService: AuthService, users: UserRepository) {
+/** Runs a callback with cross-tenant database access (bypass RLS). Injected so this module stays DB-agnostic; defaults to a plain call (tests, single-tenant use). */
+export type RunPrivileged = <T>(fn: () => Promise<T>) => Promise<T>;
+
+export function buildAuthRoutes(authService: AuthService, users: UserRepository, runPrivileged: RunPrivileged = (fn) => fn()) {
   const app = new Hono();
 
   app.post("/register", zValidator("json", registerSchema), async (c) => {
@@ -44,6 +48,20 @@ export function buildAuthRoutes(authService: AuthService, users: UserRepository)
       return ok(c, { authenticated: true });
     }
     return ok(c, tokens);
+  });
+
+  // Admin-console sign-in: no tenant is named - the account is found by email and the
+  // response says which tenant/role it is. The gateway exempts this path from tenant
+  // resolution (like /platform), hence the explicit bypass-RLS context here.
+  app.post("/admin-login", zValidator("json", adminLoginSchema), async (c) => {
+    const input = c.req.valid("json");
+    const result = await runPrivileged(() => authService.adminLogin(input));
+    const who = { tenant: result.tenant, roles: result.roles, isPlatformAdmin: result.isPlatformAdmin };
+    if (isCookieMode(c)) {
+      setSessionCookies(c, result.tokens);
+      return ok(c, { authenticated: true, ...who });
+    }
+    return ok(c, { ...result.tokens, ...who });
   });
 
   // The refresh token comes from the (path-scoped, httpOnly) cookie for browsers,

@@ -17,6 +17,18 @@ export const loginSchema = z.object({
 });
 export type LoginInput = z.infer<typeof loginSchema>;
 
+/**
+ * Admin-console sign-in. No tenant is named: the account is found by email across
+ * tenants (see AuthService.adminLogin). `workspace` is only ever sent to disambiguate
+ * the rare case of one email + password being a staff account in more than one tenant.
+ */
+export const adminLoginSchema = z.object({
+  email: emailSchema,
+  password: z.string().min(1),
+  workspace: z.string().trim().toLowerCase().max(100).optional(),
+});
+export type AdminLoginInput = z.infer<typeof adminLoginSchema>;
+
 export const refreshTokenSchema = z.object({
   refreshToken: z.string().min(1),
 });

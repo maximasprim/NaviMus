@@ -12,7 +12,7 @@ import postgres from "postgres";
  * (with the password redacted).
  */
 async function main() {
-  const adminUrl = process.env.DATABASE_MIGRATION_URL ?? process.env.DATABASE_URL;
+  const adminUrl = process.env.DATABASE_MIGRATION_URL || process.env.DATABASE_URL;
   const password = process.env.APP_DB_PASSWORD;
   if (!adminUrl) throw new Error("DATABASE_MIGRATION_URL (or DATABASE_URL) is required");
   if (!password || password.length < 16) {

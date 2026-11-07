@@ -3,3 +3,7 @@ packages:
   - "services/*"
   - "packages/*"
   - "tests/*"
+allowBuilds:
+  argon2: set this to true or false
+  esbuild: set this to true or false
+  msgpackr-extract: set this to true or false

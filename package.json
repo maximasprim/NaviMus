@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "packageManager": "pnpm@9.0.0",
   "scripts": {
-    "build": "pnpm -r --filter=./packages/* run build --if-present && pnpm -r --filter=./services/* build && pnpm -r --filter=./apps/* build",
-    "dev": "pnpm -r --parallel dev",
+    "build": "pnpm -r --filter=./packages/* run build && pnpm -r --filter=./services/* build && pnpm -r --filter=./apps/* build",
+    "dev": "pnpm -r --filter=./packages/* run build && pnpm -r --parallel dev",
     "dev:gateway": "pnpm --filter @travel/api-gateway dev",
     "dev:web": "pnpm --filter @travel/web dev",
     "dev:admin": "pnpm --filter @travel/admin dev",
@@ -18,6 +18,8 @@
     "db:generate": "pnpm --filter @travel/database db:generate",
     "db:migrate": "pnpm --filter @travel/database db:migrate",
     "db:seed": "pnpm --filter @travel/database db:seed",
+    "db:reset": "pnpm --filter @travel/database db:reset",
+    "db:reseed": "pnpm --filter @travel/database db:reseed",
     "db:studio": "pnpm --filter @travel/database db:studio",
     "secrets:generate": "node scripts/generate-secrets.mjs"
   },

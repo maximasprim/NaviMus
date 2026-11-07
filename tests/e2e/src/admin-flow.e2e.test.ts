@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { apiRequest, uniqueEmail, waitForGateway } from "./client.js";
-import { SEED_ADMIN_EMAIL, loginAs } from "./fixtures.js";
+import { SEED_ADMIN_EMAIL, SEED_CUSTOMER_EMAIL, loginAs } from "./fixtures.js";
 
 describe("admin: dashboard metrics and operator approval", () => {
   let adminToken: string;
@@ -67,7 +67,7 @@ describe("admin: dashboard metrics and operator approval", () => {
   });
 
   it("blocks a non-admin from the dashboard", async () => {
-    const customerToken = await loginAs("customer@example-travel-demo.test");
+    const customerToken = await loginAs(SEED_CUSTOMER_EMAIL);
     const res = await apiRequest("/api/v1/admin/dashboard", { token: customerToken });
     expect(res.status).toBe(403);
   });

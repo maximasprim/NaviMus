@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { BASE_URL, TENANT_SLUG } from "./client.js";
-import { SEED_CUSTOMER_EMAIL, SEED_PASSWORD } from "./fixtures.js";
+import { SEED_CUSTOMER_EMAIL, SEED_CUSTOMER_PASSWORD } from "./fixtures.js";
 
 /**
  * Browser-style sessions: httpOnly cookies instead of tokens in JS-readable
@@ -42,7 +42,7 @@ async function call(path: string, opts: { method?: string; jar?: Jar; headers?: 
   return { res, status: res.status, json, text };
 }
 
-const creds = { email: SEED_CUSTOMER_EMAIL, password: SEED_PASSWORD };
+const creds = { email: SEED_CUSTOMER_EMAIL, password: SEED_CUSTOMER_PASSWORD };
 const loginCookie = async () => {
   const jar: Jar = {};
   const r = await call("/api/v1/auth/login", { method: "POST", body: creds, jar, cookieMode: true, csrf: true });

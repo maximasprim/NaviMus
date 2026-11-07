@@ -14,7 +14,7 @@ async function main() {
   // `travel_app` role the API uses at runtime (that role is subject to
   // row-level security and has no DDL rights). Falls back to DATABASE_URL
   // for simple single-role setups.
-  const connectionString = process.env.DATABASE_MIGRATION_URL ?? process.env.DATABASE_URL;
+  const connectionString = process.env.DATABASE_MIGRATION_URL || process.env.DATABASE_URL;
   if (!connectionString) {
     console.error("DATABASE_MIGRATION_URL (or DATABASE_URL) is required to run migrations");
     process.exit(1);

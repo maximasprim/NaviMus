@@ -43,7 +43,7 @@ export function Header({ siteName = "NaviMus", tagline = "Trips & Trails", logoU
 
   return (
     <header className="sticky top-0 z-40 border-b border-ink-horizon/10 bg-sand-light/90 backdrop-blur">
-      <div className="mx-auto flex max-w-8xl items-center justify-between px-3 py-4">
+      <div className="mx-auto flex max-w-8xl items-center justify-between px-3 py-2">
         <Link href="/" className="flex items-baseline gap-2" onClick={() => setMenuOpen(false)}>
           {logoUrl ? (
             // eslint-disable-next-line @next/next/no-img-element -- tenant-supplied https URL

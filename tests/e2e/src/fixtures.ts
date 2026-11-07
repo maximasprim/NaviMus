@@ -9,13 +9,24 @@ import { apiRequest } from "./client.js";
  * migration-only DB usually mean "forgot to run db:seed", not a
  * real bug.
  */
-export const SEED_PASSWORD = "Test-Passw0rd!";
-export const SEED_ADMIN_EMAIL = "admin@example-travel-demo.test";
-export const SEED_OPERATOR_EMAIL = "operator@example-travel-demo.test";
-export const SEED_CUSTOMER_EMAIL = "customer@example-travel-demo.test";
+export const SEED_ADMIN_EMAIL = "admin@navimus.co.ke";
+export const SEED_ADMIN_PASSWORD = "@0743493619Nn";
+export const SEED_OPERATOR_EMAIL = "operator@navimus.co.ke";
+export const SEED_OPERATOR_PASSWORD = "@0743493619Oo";
+export const SEED_CUSTOMER_EMAIL = "customer@navimus.co.ke";
+export const SEED_CUSTOMER_PASSWORD = "@0743493619Cc";
+export const SEED_TEST_TENANT_ADMIN_EMAIL = "admin@enroute.co.ke";
+export const SEED_TEST_TENANT_ADMIN_PASSWORD = "@0743493619Ee";
+
+const SEED_PASSWORDS: Record<string, string> = {
+  [SEED_ADMIN_EMAIL]: SEED_ADMIN_PASSWORD,
+  [SEED_OPERATOR_EMAIL]: SEED_OPERATOR_PASSWORD,
+  [SEED_CUSTOMER_EMAIL]: SEED_CUSTOMER_PASSWORD,
+  [SEED_TEST_TENANT_ADMIN_EMAIL]: SEED_TEST_TENANT_ADMIN_PASSWORD,
+};
 export const SEED_PACKAGE_SLUG = "3-day-maasai-mara-safari-demo";
 
-export async function loginAs(email: string, password: string = SEED_PASSWORD): Promise<string> {
+export async function loginAs(email: string, password: string = SEED_PASSWORDS[email] ?? ""): Promise<string> {
   const res = await apiRequest<{ accessToken: string }>("/api/v1/auth/login", {
     method: "POST",
     body: { email, password },

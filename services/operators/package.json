@@ -9,7 +9,7 @@
     "./internal": "./dist/internal.js"
   },
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",

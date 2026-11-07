@@ -9,8 +9,8 @@ import {
 } from "@travel/auth";
 import { env } from "@travel/config";
 import { createServiceLogger } from "@travel/logger";
-import { AuthenticationError, ConflictError, NotFoundError, ValidationError } from "@travel/types";
-import type { LoginInput, RegisterInput } from "@travel/validation";
+import { AppError, AuthenticationError, AuthorizationError, ConflictError, NotFoundError, ValidationError } from "@travel/types";
+import type { AdminLoginInput, LoginInput, RegisterInput } from "@travel/validation";
 import type { EventPublisher } from "@travel/events";
 import type { UserRepository } from "../repositories/user-repository.js";
 import type { RefreshTokenRepository } from "../repositories/refresh-token-repository.js";
@@ -31,6 +31,22 @@ const VERIFICATION_TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
  * rotated token means a copy leaked, and the whole session family is revoked.
  */
 const REUSE_GRACE_MS = 10_000;
+
+/** Roles that may use the admin console. Customers and tour operators sign in through their own apps. */
+export const ADMIN_CONSOLE_ROLES = ["super_admin", "admin", "destination_manager", "travel_manager", "customer_support"];
+
+export interface AdminLoginResult {
+  tokens: AuthTokens;
+  tenant: { id: string; slug: string; name: string };
+  roles: string[];
+  /** True for super_admin: manages every tenant from the platform console. */
+  isPlatformAdmin: boolean;
+}
+
+// A real argon2 hash to verify against when no staff account matched, so "no such
+// account" costs the same time as "wrong password" and timing does not reveal which.
+let dummyHash: Promise<string> | null = null;
+const getDummyHash = () => (dummyHash ??= hashPassword(randomBytes(16).toString("hex")));
 
 function generateToken(): { raw: string; hash: string } {
   const raw = randomBytes(32).toString("hex");
@@ -140,6 +156,72 @@ export class AuthService {
     if (Math.random() < 0.01) await this.refreshTokens.deleteExpired();
 
     return this.issueTokens(user.id, user.tenantId, user.email);
+  }
+
+  /**
+   * Admin-console sign-in WITHOUT naming a tenant. Finds the staff account(s) with
+   * this email across tenants, checks the password, and signs in the one that
+   * matches - the response says which tenant and role that is, so the console can
+   * send a platform admin and a tenant admin to the right place.
+   *
+   * Security notes:
+   * - Only accounts holding an admin-console role are considered; a customer or
+   *   operator with the same email is invisible here.
+   * - The password is verified before anything about tenants is revealed, and every
+   *   failure (no account, wrong password, not staff) is the same generic error.
+   * - The caller must run this in a bypass-RLS context (it reads across tenants).
+   * - A suspended tenant blocks its own staff, exactly as the per-tenant login does;
+   *   super_admin is exempt because they operate above any tenant.
+   * - If the same email + password is staff in several tenants, a super_admin
+   *   account wins; otherwise the caller must name the workspace (code
+   *   WORKSPACE_REQUIRED), which is only revealed after the password was proven.
+   */
+  async adminLogin(input: AdminLoginInput): Promise<AdminLoginResult> {
+    const wanted = input.workspace || undefined;
+    const candidates = await this.users.findAllByEmailWithTenant(input.email);
+
+    const staff: { row: (typeof candidates)[number]; roles: string[] }[] = [];
+    for (const row of candidates) {
+      const { roles } = await this.users.getRolesAndPermissions(row.user.id);
+      if (roles.some((r) => ADMIN_CONSOLE_ROLES.includes(r))) staff.push({ row, roles });
+    }
+
+    const matches: typeof staff = [];
+    for (const s of staff) {
+      if (await verifyPassword(s.row.user.passwordHash, input.password)) matches.push(s);
+    }
+    if (staff.length === 0) await verifyPassword(await getDummyHash(), input.password); // equalise timing
+    if (matches.length === 0) throw new AuthenticationError("Invalid email or password");
+
+    let chosen = matches[0]!;
+    if (matches.length > 1) {
+      const named = wanted ? matches.find((m) => m.row.tenant.slug === wanted) : undefined;
+      const platform = matches.find((m) => m.roles.includes("super_admin"));
+      if (named) chosen = named;
+      else if (platform) chosen = platform;
+      else {
+        throw new AppError(
+          "WORKSPACE_REQUIRED",
+          "This email manages more than one workspace. Enter the workspace you want to sign in to.",
+          409,
+          { workspaces: matches.map((m) => m.row.tenant.slug) }
+        );
+      }
+    } else if (wanted && chosen.row.tenant.slug !== wanted && !chosen.roles.includes("super_admin")) {
+      // They named a workspace that is not this account's: same generic failure.
+      throw new AuthenticationError("Invalid email or password");
+    }
+
+    const { user, tenant } = chosen.row;
+    if (user.status !== "active") throw new AuthenticationError("This account is not active");
+    const isPlatformAdmin = chosen.roles.includes("super_admin");
+    if (!isPlatformAdmin && tenant.status === "suspended") {
+      throw new AuthorizationError("This account is currently suspended. Contact support for assistance.");
+    }
+
+    if (Math.random() < 0.01) await this.refreshTokens.deleteExpired();
+    const tokens = await this.issueTokens(user.id, user.tenantId, user.email);
+    return { tokens, tenant: { id: tenant.id, slug: tenant.slug, name: tenant.name }, roles: chosen.roles, isPlatformAdmin };
   }
 
   /**

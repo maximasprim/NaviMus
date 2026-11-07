@@ -170,7 +170,7 @@ export default function SiteContentPage() {
 
 function Panel({ id, active, children }: { id: TabId; active: TabId; children: React.ReactNode }) {
   return (
-    <div role="tabpanel" id={`panel-${id}`} aria-labelledby={`tab-${id}`} hidden={active !== id} className="max-w-3xl">
+    <div role="tabpanel" id={`panel-${id}`} aria-labelledby={`tab-${id}`} hidden={active !== id} className="max-w-8xl">
       {children}
     </div>
   );
