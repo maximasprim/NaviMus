@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { idempotencyKeySchema, isoDateSchema, uuidSchema } from "./common.js";
+import { emailSchema, idempotencyKeySchema, isoDateSchema, phoneSchema, uuidSchema } from "./common.js";
 
 export const travelerInputSchema = z.object({
   travelerId: uuidSchema.optional(), // reuse a saved traveler profile
@@ -41,3 +41,36 @@ export const createBookingHeadersSchema = z.object({
 export const cancelBookingSchema = z.object({
   reason: z.string().max(1000).optional(),
 });
+
+/**
+ * Admin corrects a booking's non-financial details. Status and money are deliberately NOT editable here:
+ * status only changes through the state machine, and totals are server-computed.
+ */
+export const adminUpdateBookingSchema = z
+  .object({
+    contactEmail: emailSchema.optional(),
+    contactPhone: phoneSchema.optional(),
+    specialRequests: z.string().max(2000).nullable().optional(),
+    travelDate: isoDateSchema.optional(),
+  })
+  .refine((v) => Object.keys(v).length > 0, { message: "Nothing to update" });
+
+/** A traveler's profile details, corrected by an admin. Price, type and the booking link are not editable here. */
+export const adminUpdateTravelerSchema = z
+  .object({
+    firstName: z.string().trim().min(1).max(100).optional(),
+    lastName: z.string().trim().min(1).max(100).optional(),
+    dateOfBirth: isoDateSchema.nullable().optional(),
+    gender: z.string().trim().max(20).nullable().optional(),
+    nationality: z.string().trim().length(2).toUpperCase().nullable().optional(),
+    passportExpiryDate: isoDateSchema.nullable().optional(),
+    phone: z.string().trim().max(32).nullable().optional(),
+    email: z.string().trim().email().max(255).nullable().optional(),
+    emergencyContactName: z.string().trim().max(200).nullable().optional(),
+    emergencyContactPhone: z.string().trim().max(32).nullable().optional(),
+    dietaryRequirements: z.string().trim().max(2000).nullable().optional(),
+    accessibilityRequirements: z.string().trim().max(2000).nullable().optional(),
+  })
+  .refine((v) => Object.keys(v).length > 0, { message: "Nothing to update" });
+export type AdminUpdateTravelerInput = z.infer<typeof adminUpdateTravelerSchema>;
+export type AdminUpdateBookingInput = z.infer<typeof adminUpdateBookingSchema>;

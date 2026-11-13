@@ -133,7 +133,9 @@ export function buildAccountRoutes(
     const authUser = c.get("authUser");
     const tenantId = authUser.roles.includes("super_admin") ? null : c.get("tenantId");
     const status = c.req.query("status");
-    const items = await tickets.listAll(tenantId, status);
+    const userIdParam = c.req.query("userId");
+    const userId = userIdParam && /^[0-9a-f-]{36}$/i.test(userIdParam) ? userIdParam : undefined;
+    const items = await tickets.listAll(tenantId, status, userId);
     return ok(c, items);
   });
 

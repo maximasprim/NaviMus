@@ -1,9 +1,10 @@
-import { ConflictError, NotFoundError, ValidationError } from "@travel/types";
+import { AppError, ConflictError, NotFoundError, ValidationError } from "@travel/types";
 import { EventPublisher } from "@travel/events";
 import type {
   OperatorSearchQuery,
   RegisterOperatorInput,
   ReviewOperatorInput,
+  UpdateOperatorInput,
 } from "@travel/validation";
 import type { OperatorRepository } from "../repositories/operator-repository.js";
 
@@ -66,7 +67,11 @@ export class OperatorService {
       throw new NotFoundError("Operator account for this user");
     }
     if (operator.status !== "approved") {
-      throw new ConflictError(`Your operator account is ${operator.status} and cannot manage listings yet`);
+      // Same CONFLICT / 409 / message as before; `details` additionally says which status, so the partner portal can
+      // tailor its menu (a pending, rejected and suspended partner each see something different).
+      throw new AppError("CONFLICT", `Your operator account is ${operator.status} and cannot manage listings yet`, 409, {
+        operatorStatus: operator.status,
+      });
     }
     return operator;
   }
@@ -153,5 +158,83 @@ export class OperatorService {
     const operator = await this.repo.findById(tenantId, operatorId);
     if (!operator) throw new NotFoundError("Operator");
     return this.repo.listDocuments(operatorId);
+  }
+
+  /** Everything the admin operator page shows: profile, staff with accounts, documents, totals and recent history. */
+  async getDetail(tenantId: string, id: string) {
+    const operator = await this.repo.findById(tenantId, id);
+    if (!operator) throw new NotFoundError("Operator");
+    const [staff, documents, stats, history] = await Promise.all([
+      this.repo.listStaffWithUsers(id),
+      this.repo.listDocuments(id),
+      this.repo.stats(id),
+      this.repo.history(id),
+    ]);
+    return { ...operator, staff, documents, stats, history };
+  }
+
+  async updateProfile(tenantId: string, id: string, patch: UpdateOperatorInput, actorUserId: string) {
+    const updated = await this.repo.updateProfile(tenantId, id, patch);
+    if (!updated) throw new NotFoundError("Operator");
+    await this.repo.writeAudit({
+      tenantId,
+      actorUserId,
+      action: "operator.updated",
+      resourceId: id,
+      metadata: { fields: Object.keys(patch) },
+    });
+    return updated;
+  }
+
+  /** Suspended -> approved again; rejected -> back to pending so it can be reviewed afresh. */
+  async reinstate(tenantId: string, id: string, actorUserId: string) {
+    const operator = await this.repo.findById(tenantId, id);
+    if (!operator) throw new NotFoundError("Operator");
+    if (operator.status !== "suspended" && operator.status !== "rejected") {
+      throw new ConflictError(`Only suspended or rejected operators can be reinstated (this one is ${operator.status})`);
+    }
+    const next = operator.status === "suspended" ? "approved" : "pending";
+    const updated = await this.repo.setStatus(tenantId, id, next);
+    if (next === "approved") await this.repo.grantOperatorRoleToStaff(id);
+    await this.repo.writeAudit({
+      tenantId,
+      actorUserId,
+      action: next === "approved" ? "operator.reinstated" : "operator.reopened",
+      resourceId: id,
+      metadata: { from: operator.status },
+    });
+    return updated!;
+  }
+
+  async remove(tenantId: string, id: string, actorUserId: string) {
+    const removed = await this.repo.softDelete(tenantId, id);
+    if (!removed) throw new NotFoundError("Operator");
+    await this.repo.writeAudit({
+      tenantId,
+      actorUserId,
+      action: "operator.deleted",
+      resourceId: id,
+      metadata: { businessName: removed.businessName },
+    });
+    return removed;
+  }
+
+  async removeStaff(tenantId: string, operatorId: string, userId: string, actorUserId: string) {
+    const operator = await this.repo.findById(tenantId, operatorId);
+    if (!operator) throw new NotFoundError("Operator");
+    const removed = await this.repo.removeStaff(operatorId, userId);
+    if (!removed) throw new NotFoundError("Staff member");
+    await this.repo.writeAudit({ tenantId, actorUserId, action: "operator.staff_removed", resourceId: operatorId, metadata: { userId } });
+  }
+
+  listDeleted(tenantId: string) {
+    return this.repo.listDeleted(tenantId);
+  }
+
+  async restore(tenantId: string, id: string, actorUserId: string) {
+    const row = await this.repo.restore(tenantId, id);
+    if (!row) throw new NotFoundError("Deleted operator");
+    await this.repo.writeAudit({ tenantId, actorUserId, action: "operator.restored", resourceId: id, metadata: { businessName: row.businessName } });
+    return row;
   }
 }

@@ -20,10 +20,16 @@ import {
   type TransferLocation,
 } from "@/lib/api";
 import { getToken, isLoggedIn } from "@/lib/session";
+import { useCan, useReadOnly } from "@/lib/access";
+import { ACTIONS } from "@/lib/access-rules";
 
 type Tab = "countries" | "regions" | "cities" | "categories" | "locations";
 
 export default function ReferenceDataPage() {
+  // Destination managers may look up countries, regions, cities and categories but not add to them, and the transfer
+  // locations list is administrators-only - so those controls are hidden for them rather than failing when clicked.
+  const canEdit = useCan(ACTIONS.editReferenceData);
+  const readOnly = useReadOnly(ACTIONS.editReferenceData);
   const [tab, setTab] = useState<Tab>("countries");
   const [loggedIn, setLoggedIn] = useState(true);
 
@@ -51,7 +57,7 @@ export default function ReferenceDataPage() {
       </p>
 
       <div className="mt-6 flex gap-2 border-b border-ink-horizon/10">
-        {(["countries", "regions", "cities", "categories", "locations"] as Tab[]).map((t) => (
+        {(["countries", "regions", "cities", "categories", "locations"] as Tab[]).filter((t) => canEdit || t !== "locations").map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -63,6 +69,12 @@ export default function ReferenceDataPage() {
           </button>
         ))}
       </div>
+
+      {readOnly && (
+        <p className="mt-4 rounded-lg bg-ink-horizon/5 px-4 py-2 text-sm text-ink/60">
+          View only: adding reference data is done by an administrator.
+        </p>
+      )}
 
       <div className="mt-6">
         {tab === "countries" && <CountriesTab />}
@@ -76,6 +88,7 @@ export default function ReferenceDataPage() {
 }
 
 function CountriesTab() {
+  const canEdit = useCan(ACTIONS.editReferenceData);
   const [items, setItems] = useState<Country[] | null>(null);
   const [isoCode, setIsoCode] = useState("");
   const [name, setName] = useState("");
@@ -95,11 +108,13 @@ function CountriesTab() {
 
   return (
     <div>
+      {canEdit && (
       <form onSubmit={handleAdd} className="flex gap-2">
         <input required maxLength={2} value={isoCode} onChange={(e) => setIsoCode(e.target.value.toUpperCase())} placeholder="ISO (KE)" className="w-24 rounded-lg border border-ink-horizon/20 px-3 py-2 text-sm" />
         <input required value={name} onChange={(e) => setName(e.target.value)} placeholder="Country name" className="flex-1 rounded-lg border border-ink-horizon/20 px-3 py-2 text-sm" />
         <button className="rounded-full bg-ink-horizon px-4 py-2 text-sm font-medium text-sand-light hover:bg-acacia">Add</button>
       </form>
+      )}
       <ul className="mt-4 divide-y divide-ink-horizon/10 text-sm">
         {items?.map((c) => (
           <li key={c.id} className="flex justify-between py-2">
@@ -113,6 +128,7 @@ function CountriesTab() {
 }
 
 function RegionsTab() {
+  const canEdit = useCan(ACTIONS.editReferenceData);
   const [countries, setCountries] = useState<Country[]>([]);
   const [items, setItems] = useState<Region[] | null>(null);
   const [countryId, setCountryId] = useState("");
@@ -132,6 +148,7 @@ function RegionsTab() {
 
   return (
     <div>
+      {canEdit && (
       <form onSubmit={handleAdd} className="flex gap-2">
         <select required value={countryId} onChange={(e) => setCountryId(e.target.value)} className="rounded-lg border border-ink-horizon/20 px-3 py-2 text-sm">
           <option value="">Country…</option>
@@ -144,6 +161,7 @@ function RegionsTab() {
         <input required value={name} onChange={(e) => setName(e.target.value)} placeholder="Region name" className="flex-1 rounded-lg border border-ink-horizon/20 px-3 py-2 text-sm" />
         <button className="rounded-full bg-ink-horizon px-4 py-2 text-sm font-medium text-sand-light hover:bg-acacia">Add</button>
       </form>
+      )}
       <ul className="mt-4 divide-y divide-ink-horizon/10 text-sm">
         {items?.map((r) => (
           <li key={r.id} className="py-2">
@@ -156,6 +174,7 @@ function RegionsTab() {
 }
 
 function CitiesTab() {
+  const canEdit = useCan(ACTIONS.editReferenceData);
   const [regions, setRegions] = useState<Region[]>([]);
   const [items, setItems] = useState<City[] | null>(null);
   const [regionId, setRegionId] = useState("");
@@ -184,6 +203,7 @@ function CitiesTab() {
 
   return (
     <div>
+      {canEdit && (
       <form onSubmit={handleAdd} className="flex flex-wrap gap-2">
         <select required value={regionId} onChange={(e) => setRegionId(e.target.value)} className="rounded-lg border border-ink-horizon/20 px-3 py-2 text-sm">
           <option value="">Region…</option>
@@ -198,6 +218,7 @@ function CitiesTab() {
         <input value={lng} onChange={(e) => setLng(e.target.value)} placeholder="Lng" className="w-24 rounded-lg border border-ink-horizon/20 px-3 py-2 text-sm" />
         <button className="rounded-full bg-ink-horizon px-4 py-2 text-sm font-medium text-sand-light hover:bg-acacia">Add</button>
       </form>
+      )}
       <ul className="mt-4 divide-y divide-ink-horizon/10 text-sm">
         {items?.map((c) => (
           <li key={c.id} className="py-2">
@@ -210,6 +231,7 @@ function CitiesTab() {
 }
 
 function CategoriesTab() {
+  const canEdit = useCan(ACTIONS.editReferenceData);
   const [items, setItems] = useState<DestinationCategory[] | null>(null);
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
@@ -229,11 +251,13 @@ function CategoriesTab() {
 
   return (
     <div>
+      {canEdit && (
       <form onSubmit={handleAdd} className="flex gap-2">
         <input required value={name} onChange={(e) => setName(e.target.value)} placeholder="Category name" className="flex-1 rounded-lg border border-ink-horizon/20 px-3 py-2 text-sm" />
         <input required value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="slug" className="w-40 rounded-lg border border-ink-horizon/20 px-3 py-2 text-sm" />
         <button className="rounded-full bg-ink-horizon px-4 py-2 text-sm font-medium text-sand-light hover:bg-acacia">Add</button>
       </form>
+      )}
       <ul className="mt-4 divide-y divide-ink-horizon/10 text-sm">
         {items?.map((c) => (
           <li key={c.id} className="flex justify-between py-2">
@@ -247,6 +271,7 @@ function CategoriesTab() {
 }
 
 function LocationsTab() {
+  const canEdit = useCan(ACTIONS.editReferenceData);
   const [cities, setCities] = useState<City[]>([]);
   const [items, setItems] = useState<TransferLocation[] | null>(null);
   const [cityId, setCityId] = useState("");
@@ -267,6 +292,7 @@ function LocationsTab() {
 
   return (
     <div>
+      {canEdit && (
       <form onSubmit={handleAdd} className="flex flex-wrap gap-2">
         <select required value={cityId} onChange={(e) => setCityId(e.target.value)} className="rounded-lg border border-ink-horizon/20 px-3 py-2 text-sm">
           <option value="">City…</option>
@@ -284,6 +310,7 @@ function LocationsTab() {
         </select>
         <button className="rounded-full bg-ink-horizon px-4 py-2 text-sm font-medium text-sand-light hover:bg-acacia">Add</button>
       </form>
+      )}
       <ul className="mt-4 divide-y divide-ink-horizon/10 text-sm">
         {items?.map((l) => (
           <li key={l.id} className="flex justify-between py-2">

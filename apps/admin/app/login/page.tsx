@@ -3,10 +3,11 @@
 import { useEffect, useState } from "react";
 import { login } from "@/lib/api";
 import { clearToken, setToken } from "@/lib/session";
-import { setWorkspace, setIsPlatformAdmin } from "@/lib/session-core";
+import { setWorkspace } from "@/lib/session-core";
 import { clearSelectedTenant } from "@/lib/tenant-session";
 import { ApiError } from "@/lib/api-client";
 import { safeNextPath } from "@/lib/auth-redirect";
+import { homeFor, saveAccess } from "@/lib/access";
 
 export default function AdminLoginPage() {
   const [email, setEmail] = useState("");
@@ -39,12 +40,14 @@ export default function AdminLoginPage() {
       const who = await login({ email, password, workspace: needWorkspace ? workspace : undefined });
       clearSelectedTenant(); // a fresh sign-in starts with no leftover "currently viewing" tenant
       setWorkspace(who.tenant.slug); // the tenant the server says this account belongs to; later calls name it
+      // Remember who signed in so the menus match their role from the first page. The sidebar re-confirms this with
+      // the server (which also supplies exact permissions), so this is only a head start.
+      saveAccess({ roles: who.roles, permissions: [] });
       setToken(); // the API has set the httpOnly session cookies; this only records "signed in" for the UI
-      setIsPlatformAdmin(who.isPlatformAdmin);
-      // Send each kind of admin to their own starting point: a platform admin manages tenants, a tenant admin
-      // lands on their own business. A deep link (?next=) still wins. Full navigation (not router.push) so the
+      // Send each kind of staff to their own starting page (platform admin -> tenants, tenant admin -> dashboard,
+      // support -> tickets, ...). A deep link (?next=) still wins. Full navigation (not router.push) so the
       // freshly signed-in session is what the server sees; the button stays disabled until the page changes.
-      const home = who.isPlatformAdmin ? "/tenants" : "/";
+      const home = homeFor(who.roles);
       window.location.assign(safeNextPath(new URLSearchParams(window.location.search).get("next"), home));
     } catch (err) {
       if (err instanceof ApiError && err.code === "WORKSPACE_REQUIRED") setNeedWorkspace(true);
@@ -56,9 +59,9 @@ export default function AdminLoginPage() {
   return (
     <div className="mx-auto max-w-sm px-6 py-24">
       <p className="font-mono text-xs uppercase tracking-[0.3em] text-gold-deep">Internal access</p>
-      <h1 className="mt-1 font-display text-3xl text-ink-horizon">Admin sign in</h1>
+      <h1 className="mt-0 font-display text-3xl text-ink-horizon">Admin sign in</h1>
 
-      <form onSubmit={handleSubmit} className="mt-4 space-y-2">
+      <form onSubmit={handleSubmit} className="mt-4 space-y-3">
         <div>
           <label htmlFor="email" className="block text-sm font-medium text-ink/80">
             Email

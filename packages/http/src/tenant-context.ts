@@ -105,7 +105,7 @@ export function tenantContext(
     if (!tenant) {
       throw new NotFoundError("Tenant");
     }
-    if (tenant.status === "suspended") {
+    if (tenant.status === "suspended" || tenant.status === "cancelled") {
       throw new AuthorizationError("This account is currently suspended. Contact support for assistance.");
     }
 

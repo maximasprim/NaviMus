@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePartnerState } from "@/lib/partner-state";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
@@ -50,9 +51,21 @@ function isActive(pathname: string, href: string): boolean {
 
 export function SidebarNav() {
   const pathname = usePathname() ?? "";
+  const { info, ready } = usePartnerState();
+
+  // Every page except the dashboard needs an approved operator account, so until the partner is approved the menu is
+  // just the dashboard (which explains where their application stands) instead of links that can only fail.
+  // If we can't tell (state "unknown"), show everything as before; the API still enforces.
+  const limited = info.state === "pending" || info.state === "blocked" || info.state === "unregistered";
+  const groups = !ready
+    ? []
+    : limited
+      ? GROUPS.map((g) => ({ ...g, items: g.items.filter((i) => i.href === "/") })).filter((g) => g.items.length > 0)
+      : GROUPS;
+
   return (
-    <nav aria-label="Main" className="flex flex-col gap-5 text-sm">
-      {GROUPS.map((group, gi) => (
+    <nav aria-label="Main" aria-busy={!ready} className="flex flex-col gap-5 text-sm">
+      {groups.map((group, gi) => (
         <div key={group.heading ?? gi}>
           {group.heading && <p className="mb-1.5 px-3 text-xs font-medium text-sand/45">{group.heading}</p>}
           <ul className="flex flex-col gap-0.5">

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { createTenant, listTenants, reactivateTenant, suspendTenant, downloadTenantExport, hardDeleteTenant, type Tenant } from "@/lib/api";
+import { archiveTenant, createTenant, listTenants, reactivateTenant, suspendTenant, downloadTenantExport, type Tenant } from "@/lib/api";
 import { getToken, isLoggedIn } from "@/lib/session";
 import { getSelectedTenant, setSelectedTenant, type SelectedTenant } from "@/lib/tenant-session";
 
@@ -105,19 +105,15 @@ export default function TenantsPage() {
     }
   }
 
-  /** Irreversible - see TenantService.hardDelete's doc comment. Requires the tenant to already be suspended and the slug typed back exactly. */
-  async function handleHardDelete(tenant: Tenant) {
-    const typed = window.prompt(
-      `This permanently deletes "${tenant.name}" and everything in it - bookings, payments, users, all of it. This cannot be undone.\n\nType the tenant's slug (${tenant.slug}) to confirm:`
-    );
-    if (typed === null) return;
+  async function handleArchive(tenant: Tenant) {
+    if (!window.confirm(`Archive "${tenant.name}"? Its users are locked out, but nothing is deleted and you can restore it.`)) return;
     setActionId(tenant.id);
     setActionError(null);
     try {
-      await hardDeleteTenant(getToken()!, tenant.id, typed);
-      setTenants((prev) => prev?.filter((t) => t.id !== tenant.id) ?? null);
+      const updated = await archiveTenant(getToken()!, tenant.id);
+      setTenants((prev) => prev?.map((t) => (t.id === updated.id ? updated : t)) ?? null);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Could not delete tenant.");
+      setActionError(err instanceof Error ? err.message : "Could not archive tenant.");
     } finally {
       setActionId(null);
     }
@@ -262,7 +258,11 @@ export default function TenantsPage() {
           <tbody>
             {tenants.map((t) => (
               <tr key={t.id} className="border-b border-ink-horizon/5 last:border-0">
-                <td className="px-4 py-3 text-ink-horizon">{t.name}</td>
+                <td className="px-4 py-3 text-ink-horizon">
+                  <Link href={`/tenants/${t.id}`} className="underline-offset-2 hover:underline">
+                    {t.name}
+                  </Link>
+                </td>
                 <td className="px-4 py-3 font-mono text-xs text-ink/50">{t.slug}</td>
                 <td className="px-4 py-3">
                   <span
@@ -276,6 +276,12 @@ export default function TenantsPage() {
                 <td className="px-4 py-3 font-mono text-xs text-ink/40">{new Date(t.createdAt).toLocaleDateString()}</td>
                 <td className="px-4 py-3 text-right">
                   <div className="flex justify-end gap-2">
+                    <Link
+                      href={`/tenants/${t.id}`}
+                      className="rounded-full border border-ink-horizon/20 px-3 py-1.5 text-xs font-medium text-ink-horizon transition hover:bg-ink-horizon/5"
+                    >
+                      Details
+                    </Link>
                     <button
                       onClick={() => handleManage(t)}
                       className="rounded-full border border-ink-horizon/20 px-3 py-1.5 text-xs font-medium text-ink-horizon transition hover:bg-ink-horizon/5"
@@ -289,31 +295,31 @@ export default function TenantsPage() {
                     >
                       Export
                     </button>
-                    {t.status === "suspended" ? (
+                    {t.status === "suspended" || t.status === "cancelled" ? (
                       <button
                         onClick={() => handleReactivate(t)}
                         disabled={actionId === t.id}
                         className="rounded-full bg-acacia px-3 py-1.5 text-xs font-medium text-sand-light transition hover:bg-acacia/90 disabled:opacity-50"
                       >
-                        Reactivate
+                        {t.status === "cancelled" ? "Restore" : "Reactivate"}
                       </button>
                     ) : (
-                      <button
-                        onClick={() => handleSuspend(t)}
-                        disabled={actionId === t.id}
-                        className="rounded-full border border-plum/30 px-3 py-1.5 text-xs font-medium text-plum transition hover:bg-plum/10 disabled:opacity-50"
-                      >
-                        Suspend
-                      </button>
-                    )}
-                    {t.status === "suspended" && (
-                      <button
-                        onClick={() => handleHardDelete(t)}
-                        disabled={actionId === t.id}
-                        className="rounded-full bg-plum px-3 py-1.5 text-xs font-medium text-sand-light transition hover:bg-plum/90 disabled:opacity-50"
-                      >
-                        Delete permanently
-                      </button>
+                      <>
+                        <button
+                          onClick={() => handleSuspend(t)}
+                          disabled={actionId === t.id}
+                          className="rounded-full border border-plum/30 px-3 py-1.5 text-xs font-medium text-plum transition hover:bg-plum/10 disabled:opacity-50"
+                        >
+                          Suspend
+                        </button>
+                        <button
+                          onClick={() => handleArchive(t)}
+                          disabled={actionId === t.id}
+                          className="rounded-full border border-plum/30 px-3 py-1.5 text-xs font-medium text-plum transition hover:bg-plum/10 disabled:opacity-50"
+                        >
+                          Archive
+                        </button>
+                      </>
                     )}
                   </div>
                 </td>

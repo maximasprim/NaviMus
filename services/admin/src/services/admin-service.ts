@@ -1,5 +1,5 @@
-import { NotFoundError } from "@travel/types";
-import type { CreateCancellationPolicyInput } from "@travel/validation";
+import { NotFoundError, ValidationError } from "@travel/types";
+import type { CreateCancellationPolicyInput, ListingKind, UpdateListingInput } from "@travel/validation";
 import type { DateRange, MetricsRepository } from "../repositories/metrics-repository.js";
 import type { AdminOperationsRepository } from "../repositories/admin-operations-repository.js";
 
@@ -187,5 +187,66 @@ export class AdminService {
   }
   async upsertNotificationTemplate(tenantId: string, input: { key: string; channel: string; locale?: string; subject?: string; bodyTemplate: string }) {
     return this.ops.upsertNotificationTemplate(tenantId, input);
+  }
+
+  // --- Listings management (destinations, packages, accommodation, transport providers) ---
+  // `scope` is null for a platform admin (every tenant) or the admin's own tenant id.
+  private static readonly LISTING_LABEL: Record<ListingKind, string> = {
+    destination: "Destination",
+    package: "Package",
+    accommodation: "Accommodation",
+    transport: "Transport provider",
+  };
+
+  listListings(kind: ListingKind, scope: string | null, q: { page: number; pageSize: number; search?: string; status?: string; deleted?: boolean }) {
+    return this.ops.listListings(kind, scope, q);
+  }
+
+  async getListing(kind: ListingKind, scope: string | null, id: string) {
+    const row = await this.ops.getListing(kind, scope, id);
+    if (!row) throw new NotFoundError(AdminService.LISTING_LABEL[kind]);
+    return row;
+  }
+
+  async updateListing(kind: ListingKind, scope: string | null, id: string, patch: UpdateListingInput, actorUserId: string) {
+    const row = await this.ops.updateListing(kind, scope, id, patch);
+    if (row === "nothing") throw new ValidationError(`None of those fields can be edited on a ${AdminService.LISTING_LABEL[kind].toLowerCase()}`);
+    if (!row) throw new NotFoundError(AdminService.LISTING_LABEL[kind]);
+    await this.ops.writeAuditLog({
+      tenantId: row.tenantId,
+      actorUserId,
+      action: `${kind}.updated`,
+      resourceType: kind,
+      resourceId: id,
+      metadata: { fields: Object.keys(patch) },
+    });
+    return row;
+  }
+
+  async deleteListing(kind: ListingKind, scope: string | null, id: string, actorUserId: string) {
+    const row = await this.ops.softDeleteListing(kind, scope, id);
+    if (!row) throw new NotFoundError(AdminService.LISTING_LABEL[kind]);
+    await this.ops.writeAuditLog({
+      tenantId: row.tenantId,
+      actorUserId,
+      action: `${kind}.deleted`,
+      resourceType: kind,
+      resourceId: id,
+      metadata: { name: row.name },
+    });
+  }
+
+  async restoreListing(kind: ListingKind, scope: string | null, id: string, actorUserId: string) {
+    const row = await this.ops.restoreListing(kind, scope, id);
+    if (!row) throw new NotFoundError(`Deleted ${AdminService.LISTING_LABEL[kind].toLowerCase()}`);
+    await this.ops.writeAuditLog({
+      tenantId: row.tenantId,
+      actorUserId,
+      action: `${kind}.restored`,
+      resourceType: kind,
+      resourceId: id,
+      metadata: { name: row.name },
+    });
+    return row;
   }
 }

@@ -2,7 +2,11 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { getAdminBooking, adminCancelBooking, issueRefund, listPaymentsForBooking } from "@/lib/api";
+import { getAdminBooking, adminCancelBooking, issueRefund, listPaymentsForBooking, updateAdminBooking } from "@/lib/api";
+import { Btn, Field, Modal, inputCls } from "@/components/detail-ui";
+import { BookingTravelers } from "@/components/booking-travelers";
+import { HistoryCard } from "@/components/history-card";
+import { useAccess, can } from "@/lib/access";
 import { getToken } from "@/lib/session";
 
 export default function AdminBookingDetailPage({ params }: { params: { id: string } }) {
@@ -13,6 +17,44 @@ export default function AdminBookingDetailPage({ params }: { params: { id: strin
   const [refundAmount, setRefundAmount] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const { access, ready } = useAccess();
+  const canEdit = ready && can(access, { roles: ["admin", "travel_manager", "customer_support"] });
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState({ contactEmail: "", contactPhone: "", specialRequests: "", travelDate: "" });
+  const FROZEN = ["COMPLETED", "CANCEL_REQUESTED", "CANCELLED", "REFUND_PENDING", "REFUNDED", "EXPIRED", "FAILED"];
+
+  function openEdit() {
+    if (!booking) return;
+    setForm({
+      contactEmail: booking.contactEmail,
+      contactPhone: booking.contactPhone ?? "",
+      specialRequests: booking.specialRequests ?? "",
+      travelDate: booking.travelDate,
+    });
+    setEditing(true);
+  }
+
+  async function saveEdit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!booking) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      await updateAdminBooking(getToken()!, params.id, {
+        contactEmail: form.contactEmail.trim(),
+        contactPhone: form.contactPhone.trim() || undefined,
+        specialRequests: form.specialRequests.trim() || null,
+        travelDate: form.travelDate,
+      });
+      setEditing(false);
+      setMessage("Booking details saved.");
+      reload();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Could not save.");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   function reload() {
     getAdminBooking(getToken()!, params.id).then(setBooking);
@@ -83,10 +125,66 @@ export default function AdminBookingDetailPage({ params }: { params: { id: strin
           <p className="mt-1">{booking.contactEmail}</p>
         </div>
         <div>
+          <p className="text-xs uppercase tracking-wide text-ink/40">Phone</p>
+          <p className="mt-1">{booking.contactPhone || "-"}</p>
+        </div>
+        <div>
           <p className="text-xs uppercase tracking-wide text-ink/40">Travelers</p>
           <p className="mt-1">{booking.travelerCount}</p>
         </div>
+        <div className="col-span-2">
+          <p className="text-xs uppercase tracking-wide text-ink/40">Special requests</p>
+          <p className="mt-1 whitespace-pre-line">{booking.specialRequests || "-"}</p>
+        </div>
       </div>
+      {canEdit && (
+        <div className="mt-4">
+          <Btn onClick={openEdit} disabled={FROZEN.includes(booking.status)}>
+            Edit details
+          </Btn>
+          {FROZEN.includes(booking.status) && (
+            <span className="ml-3 text-xs text-ink/40">Details are locked once a booking is completed, cancelled or refunded.</span>
+          )}
+        </div>
+      )}
+      <BookingTravelers
+        bookingId={booking.id}
+        travelers={booking.travelers ?? []}
+        canEdit={canEdit}
+        locked={FROZEN.includes(booking.status)}
+        onSaved={() => getAdminBooking(getToken()!, booking.id).then(setBooking)}
+      />
+      <div className="mt-6">
+        <HistoryCard resourceType="booking" resourceId={booking.id} />
+      </div>
+
+      {editing && (
+        <Modal title="Edit booking details" onClose={() => setEditing(false)}>
+          <form onSubmit={saveEdit} className="space-y-3">
+            <Field label="Contact email">
+              <input required type="email" value={form.contactEmail} onChange={(e) => setForm((f) => ({ ...f, contactEmail: e.target.value }))} className={inputCls} />
+            </Field>
+            <Field label="Contact phone">
+              <input value={form.contactPhone} onChange={(e) => setForm((f) => ({ ...f, contactPhone: e.target.value }))} className={inputCls} />
+            </Field>
+            <Field label="Travel date">
+              <input required type="date" value={form.travelDate} onChange={(e) => setForm((f) => ({ ...f, travelDate: e.target.value }))} className={inputCls} />
+            </Field>
+            <Field label="Special requests">
+              <textarea rows={3} value={form.specialRequests} onChange={(e) => setForm((f) => ({ ...f, specialRequests: e.target.value }))} className={inputCls} />
+            </Field>
+            <p className="text-xs text-ink/40">Status and amounts can't be edited here. Use Cancel or Refund below.</p>
+            <div className="flex justify-end gap-2 pt-2">
+              <Btn type="button" onClick={() => setEditing(false)}>
+                Cancel
+              </Btn>
+              <Btn type="submit" tone="primary" disabled={busy}>
+                Save
+              </Btn>
+            </div>
+          </form>
+        </Modal>
+      )}
 
       {booking.statusHistory.length > 0 && (
         <div className="mt-8">

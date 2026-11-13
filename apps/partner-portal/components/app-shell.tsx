@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
+import { RouteGuard } from "./route-guard";
 
 /** Public pages for people who are not signed in yet: no sidebar, just the page. */
 const CHROMELESS = ["/login", "/register"];
@@ -43,7 +44,9 @@ export function AppShell({ sidebar, children }: { sidebar: ReactNode; children: 
     <div className="flex h-screen overflow-hidden supports-[height:100dvh]:h-dvh">
       {sidebar}
       <div className="scroll-light min-w-0 flex-1 overflow-y-auto">
-        {matches(pathname, FULL_BLEED) ? children : <div className="mx-auto max-w-8xl px-3 py-4">{children}</div>}
+        <RouteGuard>
+          {matches(pathname, FULL_BLEED) ? children : <div className="mx-auto max-w-8xl px-3 py-4">{children}</div>}
+        </RouteGuard>
       </div>
     </div>
   );

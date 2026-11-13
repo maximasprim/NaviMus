@@ -1,9 +1,9 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { cancelBookingSchema, createBookingSchema, idempotencyKeySchema } from "@travel/validation";
+import { adminUpdateBookingSchema, adminUpdateTravelerSchema, cancelBookingSchema, createBookingSchema, idempotencyKeySchema } from "@travel/validation";
 import { ok, paginated } from "@travel/http";
-import { requireAuth, requirePermissions } from "@travel/auth";
+import { requireAuth, requirePermissions, requireRoles } from "@travel/auth";
 import { ValidationError } from "@travel/types";
 import { OperatorService } from "@travel/service-operators/internal";
 import type { BookingService } from "./services/booking-service.js";
@@ -39,6 +39,35 @@ export function buildBookingRoutes(service: BookingService, operators: OperatorS
     const booking = await service.adminGetBooking(tenantId, id);
     return ok(c, booking);
   });
+
+  // Correct contact details / special requests / travel date. Status and amounts are not editable here.
+  app.patch(
+    "/admin/:id",
+    requireRoles("admin", "super_admin", "travel_manager", "customer_support"),
+    zValidator("json", adminUpdateBookingSchema),
+    async (c) => {
+      const authUser = c.get("authUser");
+      const id = c.req.param("id");
+      if (!id) return c.json({ success: false, error: { code: "VALIDATION_ERROR", message: "Missing id" } }, 400);
+      const tenantId = authUser.roles.includes("super_admin") ? null : c.get("tenantId");
+      return ok(c, await service.adminUpdateBooking(tenantId, id, c.req.valid("json"), authUser.sub));
+    }
+  );
+
+  // Correct a traveler's profile details on a booking (name, passport expiry, dietary needs...). Money is not touched.
+  app.patch(
+    "/admin/:id/travelers/:travelerLineId",
+    requireRoles("admin", "super_admin", "travel_manager", "customer_support"),
+    zValidator("json", adminUpdateTravelerSchema),
+    async (c) => {
+      const authUser = c.get("authUser");
+      const id = c.req.param("id");
+      const lineId = c.req.param("travelerLineId");
+      if (!id || !lineId) return c.json({ success: false, error: { code: "VALIDATION_ERROR", message: "Missing id" } }, 400);
+      const tenantId = authUser.roles.includes("super_admin") ? null : c.get("tenantId");
+      return ok(c, await service.adminUpdateTraveler(tenantId, id, lineId, c.req.valid("json"), authUser.sub));
+    }
+  );
 
   app.patch(
     "/admin/:id/cancel",

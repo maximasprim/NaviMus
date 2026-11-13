@@ -11,6 +11,9 @@ import {
   createRegionSchema,
   createTransferLocationSchema,
   dashboardMetricsQuerySchema,
+  LISTING_KINDS,
+  listingsQuerySchema,
+  updateListingSchema,
   moderateReviewSchema,
   setCustomDomainSchema,
   updateSystemSettingSchema,
@@ -19,6 +22,7 @@ import {
 import { ok, paginated } from "@travel/http";
 import { requireAuth, requireRoles } from "@travel/auth";
 import { NotFoundError } from "@travel/types";
+import type { ListingKind } from "@travel/validation";
 import type { AdminService } from "./services/admin-service.js";
 import type { TenantService } from "./services/tenant-service.js";
 import type { BillingService } from "./billing/billing-service.js";
@@ -157,6 +161,37 @@ export function buildAdminRoutes(service: AdminService, tenants: TenantService, 
     const pending = await service.listPendingApprovals(c.get("tenantId"));
     return ok(c, pending);
   });
+
+  // --- Listings management: every destination / package / accommodation / transport provider, in every status,
+  // editable, (soft) deletable and restorable. super_admin: all kinds, all tenants. ---
+  const LISTING_ROLES: Record<ListingKind, string[]> = {
+    destination: ["admin", "super_admin", "destination_manager"],
+    package: ["admin", "super_admin", "travel_manager"],
+    accommodation: ["admin", "super_admin", "travel_manager"],
+    transport: ["admin", "super_admin", "travel_manager"],
+  };
+  for (const kind of LISTING_KINDS) {
+    const base = `/listings/${kind}s`;
+    const roles = requireRoles(...LISTING_ROLES[kind]);
+    app.get(base, roles, zValidator("query", listingsQuerySchema), async (c) => {
+      const q = c.req.valid("query");
+      const { items, total } = await service.listListings(kind, scopeOrNull(c), { ...q, deleted: q.deleted === "true" });
+      return paginated(c, items, q.page, q.pageSize, total);
+    });
+    app.get(`${base}/:id`, roles, async (c) => ok(c, await service.getListing(kind, scopeOrNull(c), requireParam(c, "id"))));
+    app.patch(`${base}/:id`, roles, zValidator("json", updateListingSchema), async (c) => {
+      const row = await service.updateListing(kind, scopeOrNull(c), requireParam(c, "id"), c.req.valid("json"), c.get("authUser").sub);
+      return ok(c, row);
+    });
+    app.delete(`${base}/:id`, roles, async (c) => {
+      await service.deleteListing(kind, scopeOrNull(c), requireParam(c, "id"), c.get("authUser").sub);
+      return ok(c, { deleted: true });
+    });
+    app.post(`${base}/:id/restore`, roles, async (c) => {
+      const row = await service.restoreListing(kind, scopeOrNull(c), requireParam(c, "id"), c.get("authUser").sub);
+      return ok(c, row);
+    });
+  }
 
   app.get(
     "/audit-logs",

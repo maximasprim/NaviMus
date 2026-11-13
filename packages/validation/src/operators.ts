@@ -46,3 +46,14 @@ export type OperatorSearchQuery = z.infer<typeof operatorSearchQuerySchema>;
 export const setCommissionRateSchema = z.object({
   commissionRatePercent: z.number().min(0).max(100),
 });
+
+/** Admin edits an operator's profile. Only the fields sent are changed. */
+export const updateOperatorSchema = z
+  .object({
+    businessName: z.string().trim().min(2).max(200).optional(),
+    contactEmail: emailSchema.optional(),
+    contactPhone: phoneSchema.nullable().optional(),
+    description: z.string().max(5000).nullable().optional(),
+  })
+  .refine((v) => Object.keys(v).length > 0, { message: "Nothing to update" });
+export type UpdateOperatorInput = z.infer<typeof updateOperatorSchema>;

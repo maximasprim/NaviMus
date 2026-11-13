@@ -3,10 +3,13 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
+import { can, useAccess } from "@/lib/access";
+import { ROUTE_RULES } from "@/lib/access-rules";
 
 type IconName =
   | "dashboard" | "tenants" | "operators" | "users" | "approvals" | "bookings" | "support"
-  | "moderation" | "audit" | "reference" | "templates" | "policies" | "settings" | "site";
+  | "payments" | "invoices" | "reviews" | "promotions"
+  | "listings" | "moderation" | "audit" | "reference" | "templates" | "policies" | "settings" | "site";
 
 /** 24x24 line icons, drawn inline so the admin app needs no icon dependency. */
 const ICONS: Record<IconName, ReactNode> = {
@@ -17,6 +20,11 @@ const ICONS: Record<IconName, ReactNode> = {
   approvals: (<><circle cx="12" cy="12" r="9" /><path d="m8 12.5 2.8 2.8L16 9.5" /></>),
   bookings: (<><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M3 10h18M8 3v4M16 3v4" /></>),
   support: (<path d="M4 5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1h-9l-5 4v-4H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z" />),
+  listings: (<><path d="M4 6h16M4 12h16M4 18h10" /><circle cx="19" cy="18" r="1.5" /></>),
+  payments: (<><rect x="3" y="6" width="18" height="12" rx="2" /><path d="M3 10h18M7 15h3" /></>),
+  invoices: (<><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z" /><path d="M9 8h6M9 12h6" /></>),
+  reviews: (<path d="m12 3.5 2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.8-5.2 2.8 1-5.8-4.3-4.1 5.9-.9z" />),
+  promotions: (<><path d="M3 12V5h7l10 10-7 7z" /><circle cx="7.5" cy="9.5" r="1.2" /></>),
   moderation: (<path d="M12 3 4.5 6v5.5c0 4.5 3 8 7.5 9.5 4.5-1.5 7.5-5 7.5-9.5V6L12 3z" />),
   audit: (<><path d="M6 3h9l4 4v14H6z" /><path d="M14 3v5h5M9 13h7M9 17h7" /></>),
   reference: (<><ellipse cx="12" cy="6" rx="8" ry="3" /><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6" /></>),
@@ -26,6 +34,7 @@ const ICONS: Record<IconName, ReactNode> = {
   site: (<><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 9h18M7 6.5h.01M10 6.5h.01" /><path d="M8 14h8M8 17h5" /></>),
 };
 
+/** Who sees each link comes from the shared ROUTE_RULES table (lib/access-rules.ts), the same one the route guard uses. */
 interface NavItem { href: string; label: string; icon: IconName }
 interface NavGroup { heading?: string; items: NavItem[] }
 
@@ -39,6 +48,7 @@ const GROUPS: NavGroup[] = [
       { href: "/operators", label: "Operators", icon: "operators" },
       { href: "/users", label: "Users", icon: "users" },
       { href: "/approvals", label: "Approvals", icon: "approvals" },
+      { href: "/listings", label: "Listings", icon: "listings" },
     ],
   },
   {
@@ -48,6 +58,15 @@ const GROUPS: NavGroup[] = [
       { href: "/support", label: "Support", icon: "support" },
       { href: "/moderation", label: "Moderation", icon: "moderation" },
       { href: "/audit-log", label: "Audit log", icon: "audit" },
+    ],
+  },
+  {
+    heading: "Commerce",
+    items: [
+      { href: "/payments", label: "Payments", icon: "payments" },
+      { href: "/invoices", label: "Invoices", icon: "invoices" },
+      { href: "/reviews", label: "Reviews", icon: "reviews" },
+      { href: "/promotions", label: "Promotions", icon: "promotions" },
     ],
   },
   {
@@ -69,11 +88,25 @@ function isActive(pathname: string, href: string): boolean {
 
 export function SidebarNav() {
   const pathname = usePathname() ?? "";
+  const { access, ready } = useAccess();
+
+  // Until we know who is signed in, show no role-specific menu (so a wrong one never flashes). If the server can't
+  // say, `can` treats it as "allowed", which is how the console behaved before roles - the API still enforces.
+  const groups = ready
+    ? GROUPS.map((g) => ({ ...g, items: g.items.filter((i) => can(access, ROUTE_RULES[i.href])) })).filter((g) => g.items.length > 0)
+    : [];
+  // Only the platform admin works at platform level; everyone else sees these as ordinary "Management" links.
+  const isPlatform = !access || access.roles.includes("super_admin");
+
   return (
-    <nav aria-label="Main" className="flex flex-col gap-5 text-sm">
-      {GROUPS.map((group, gi) => (
+    <nav aria-label="Main" aria-busy={!ready} className="flex flex-col gap-5 text-sm">
+      {groups.map((group, gi) => (
         <div key={group.heading ?? gi}>
-          {group.heading && <p className="mb-1.5 px-3 text-xs font-medium text-sand/45">{group.heading}</p>}
+          {group.heading && (
+            <p className="mb-1.5 px-3 text-xs font-medium text-sand/45">
+              {group.heading === "Platform" && !isPlatform ? "Management" : group.heading}
+            </p>
+          )}
           <ul className="flex flex-col gap-0.5">
             {group.items.map((item) => {
               const active = isActive(pathname, item.href);

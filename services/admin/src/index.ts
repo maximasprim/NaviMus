@@ -9,6 +9,8 @@ import { UserRepository, AuthService, RefreshTokenRepository } from "@travel/ser
 import { EventPublisher } from "@travel/events";
 import { MetricsRepository } from "./repositories/metrics-repository.js";
 import { AdminOperationsRepository } from "./repositories/admin-operations-repository.js";
+import { RecordsRepository } from "./records/records-repository.js";
+import { buildRecordsRoutes } from "./records/records-routes.js";
 import { TenantRepository } from "./repositories/tenant-repository.js";
 import { AdminService } from "./services/admin-service.js";
 import { TenantService } from "./services/tenant-service.js";
@@ -63,6 +65,8 @@ app.get("/health", (c) => ok(c, { status: "ok", service: "admin" }));
 app.get("/ready", (c) => ok(c, { status: "ready" }));
 // Mounted BEFORE the catch-all below so the site routes carry only their own auth (requireAuth + admin roles).
 app.route("/site", buildAdminSiteRoutes(siteContentService));
+// Detail / history / edit endpoints behind the admin console's detail pages (payments, listings in full, coupons...).
+app.route("/records", buildRecordsRoutes(new RecordsRepository(db)));
 app.route("/", buildAdminRoutes(adminService, tenantService, billingService));
 
 /**

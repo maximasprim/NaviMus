@@ -101,5 +101,6 @@ export function clearSessionMarker(): void {
   window.localStorage.removeItem(SELECTED_TENANT_KEY); // new: stale tenant caused the login failure
   window.localStorage.removeItem(WORKSPACE_KEY);       // new
   window.localStorage.removeItem(PLATFORM_KEY);
+  window.localStorage.removeItem("travel_admin_access");
   writeHintCookie("", 0);
 }

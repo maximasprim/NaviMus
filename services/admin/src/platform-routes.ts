@@ -81,6 +81,13 @@ export function buildPlatformRoutes(service: TenantService, db: Database, billin
     return ok(c, tenant);
   });
 
+  app.post("/tenants/:id/archive", zValidator("json", suspendTenantSchema), async (c) => {
+    const authUser = c.get("authUser");
+    const id = requireParam(c, "id");
+    const { reason } = c.req.valid("json");
+    return ok(c, await service.archiveTenant(id, reason, authUser.sub));
+  });
+
   app.post("/tenants/:id/reactivate", async (c) => {
     const authUser = c.get("authUser");
     const id = requireParam(c, "id");

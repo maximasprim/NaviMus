@@ -45,3 +45,26 @@ export const resetPasswordSchema = z.object({
 export const verifyEmailSchema = z.object({
   token: z.string().min(1),
 });
+
+/** Admin creates an account directly (no email round-trip). `tenantId` is honoured for super_admin only. */
+export const adminCreateUserSchema = z.object({
+  email: emailSchema,
+  password: passwordSchema,
+  firstName: z.string().trim().min(1).max(100),
+  lastName: z.string().trim().min(1).max(100),
+  phone: phoneSchema.optional(),
+  role: z.string().min(1).default("customer"),
+  tenantId: z.string().uuid().optional(),
+});
+export type AdminCreateUserInput = z.infer<typeof adminCreateUserSchema>;
+
+/** Admin edits a user's profile. Only the fields sent are changed. */
+export const adminUpdateUserSchema = z
+  .object({
+    email: emailSchema.optional(),
+    firstName: z.string().trim().min(1).max(100).optional(),
+    lastName: z.string().trim().min(1).max(100).optional(),
+    phone: phoneSchema.nullable().optional(),
+  })
+  .refine((v) => Object.keys(v).length > 0, { message: "Nothing to update" });
+export type AdminUpdateUserInput = z.infer<typeof adminUpdateUserSchema>;

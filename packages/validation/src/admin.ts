@@ -149,3 +149,30 @@ export const upsertNotificationTemplateSchema = z.object({
   subject: z.string().max(300).optional(),
   bodyTemplate: z.string().min(1),
 });
+
+// --- Listings management (destinations, packages, accommodation, transport providers) ---
+export const LISTING_KINDS = ["destination", "package", "accommodation", "transport"] as const;
+export type ListingKind = (typeof LISTING_KINDS)[number];
+export const LISTING_STATUSES = ["draft", "pending_review", "published", "rejected", "archived"] as const;
+
+export const listingsQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  search: z.string().trim().max(100).optional(),
+  status: z.enum(LISTING_STATUSES).optional(),
+  /** "true" lists the soft-deleted ones instead (for Restore). */
+  deleted: z.enum(["true", "false"]).default("false"),
+});
+
+/** Every field optional; each kind only accepts the fields it actually has (the rest are ignored). */
+export const updateListingSchema = z
+  .object({
+    name: z.string().trim().min(2).max(200).optional(),
+    shortDescription: z.string().max(500).nullable().optional(),
+    description: z.string().max(20000).nullable().optional(),
+    status: z.enum(LISTING_STATUSES).optional(),
+    featured: z.boolean().optional(),
+    contactPhone: z.string().max(32).nullable().optional(),
+  })
+  .refine((v) => Object.keys(v).length > 0, { message: "Nothing to update" });
+export type UpdateListingInput = z.infer<typeof updateListingSchema>;

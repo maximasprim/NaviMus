@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { eq, schema, scopedInsert, withTenantRLS, withPlatformRLSBypass, type Database, type PlanLimitChecker } from "@travel/database";
 import { AvailabilityError, BookingError, ConflictError, NotFoundError, ValidationError, type BookingStatus, type Currency } from "@travel/types";
-import type { CreateBookingInput } from "@travel/validation";
+import type { AdminUpdateBookingInput, AdminUpdateTravelerInput, CreateBookingInput } from "@travel/validation";
 import { AvailabilityRepository, PackageRepository, calculatePackageQuote } from "@travel/service-packages/internal";
 import { AccommodationService } from "@travel/service-accommodation/internal";
 import { TransportService } from "@travel/service-transport/internal";
@@ -304,6 +304,58 @@ export class BookingService {
     return this.processCancellation(booking, adminUserId, reason);
   }
 
+  /** Statuses where the trip is settled or being unwound: details are frozen so the record matches what happened. */
+  private static readonly FROZEN_STATUSES: BookingStatus[] = [
+    "COMPLETED",
+    "CANCEL_REQUESTED",
+    "CANCELLED",
+    "REFUND_PENDING",
+    "REFUNDED",
+    "EXPIRED",
+    "FAILED",
+  ];
+
+  async adminUpdateBooking(tenantId: string | null, bookingId: string, patch: AdminUpdateBookingInput, adminUserId: string) {
+    const booking = tenantId ? await this.bookings.findById(tenantId, bookingId) : await this.bookings.findByIdUnscoped(bookingId);
+    if (!booking) throw new NotFoundError("Booking");
+    if (BookingService.FROZEN_STATUSES.includes(booking.status as BookingStatus)) {
+      throw new ConflictError(`A ${booking.status.toLowerCase().replace(/_/g, " ")} booking can no longer be edited`);
+    }
+    if (patch.travelDate && new Date(patch.travelDate).getTime() < Date.now() - 24 * 60 * 60 * 1000) {
+      throw new ValidationError("The travel date can't be in the past");
+    }
+    const updated = await this.bookings.updateDetails(bookingId, patch);
+    await this.bookings.writeAudit({
+      tenantId: booking.tenantId,
+      actorUserId: adminUserId,
+      action: "booking.updated",
+      resourceId: bookingId,
+      metadata: {
+        fields: Object.keys(patch),
+        ...(patch.travelDate ? { travelDateFrom: booking.travelDate, travelDateTo: patch.travelDate } : {}),
+      },
+    });
+    return updated;
+  }
+
+  async adminUpdateTraveler(tenantId: string | null, bookingId: string, bookingTravelerId: string, patch: AdminUpdateTravelerInput, adminUserId: string) {
+    const booking = tenantId ? await this.bookings.findById(tenantId, bookingId) : await this.bookings.findByIdUnscoped(bookingId);
+    if (!booking) throw new NotFoundError("Booking");
+    if (BookingService.FROZEN_STATUSES.includes(booking.status as BookingStatus)) {
+      throw new ConflictError(`A ${booking.status.toLowerCase().replace(/_/g, " ")} booking can no longer be edited`);
+    }
+    const updated = await this.bookings.updateTravelerOnBooking(bookingId, bookingTravelerId, patch);
+    if (!updated) throw new NotFoundError("Traveler");
+    await this.bookings.writeAudit({
+      tenantId: booking.tenantId,
+      actorUserId: adminUserId,
+      action: "booking.traveler_updated",
+      resourceId: bookingId,
+      metadata: { fields: Object.keys(patch), travelerLine: bookingTravelerId },
+    });
+    return (await this.bookings.getTravelerDetails(bookingId)).find((t) => t.id === bookingTravelerId)!;
+  }
+
   async adminListBookings(tenantId: string | null, page: number, pageSize: number, status?: BookingStatus) {
     return this.bookings.listAll(tenantId, page, pageSize, status);
   }
@@ -313,7 +365,7 @@ export class BookingService {
     if (!booking) throw new NotFoundError("Booking");
     const [items, travelers, statusHistory] = await Promise.all([
       this.bookings.getItems(bookingId),
-      this.bookings.getTravelers(bookingId),
+      this.bookings.getTravelerDetails(bookingId),
       this.bookings.getStatusHistory(bookingId),
     ]);
     return { ...booking, items, travelers, statusHistory };

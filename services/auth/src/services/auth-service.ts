@@ -10,7 +10,7 @@ import {
 import { env } from "@travel/config";
 import { createServiceLogger } from "@travel/logger";
 import { AppError, AuthenticationError, AuthorizationError, ConflictError, NotFoundError, ValidationError } from "@travel/types";
-import type { AdminLoginInput, LoginInput, RegisterInput } from "@travel/validation";
+import type { AdminCreateUserInput, AdminLoginInput, LoginInput, RegisterInput } from "@travel/validation";
 import type { EventPublisher } from "@travel/events";
 import type { UserRepository } from "../repositories/user-repository.js";
 import type { RefreshTokenRepository } from "../repositories/refresh-token-repository.js";
@@ -33,7 +33,7 @@ const VERIFICATION_TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const REUSE_GRACE_MS = 10_000;
 
 /** Roles that may use the admin console. Customers and tour operators sign in through their own apps. */
-export const ADMIN_CONSOLE_ROLES = ["super_admin", "admin", "destination_manager", "travel_manager", "customer_support"];
+export const ADMIN_CONSOLE_ROLES = ["super_admin", "admin", "destination_manager", "travel_manager", "finance_manager", "customer_support", "marketing_manager"];
 
 export interface AdminLoginResult {
   tokens: AuthTokens;
@@ -89,6 +89,49 @@ export class AuthService {
     // doc comment for why this reuses the same token machinery as password reset.
     await this.requestEmailVerification(tenantId, user.id, user.email);
 
+    return { userId: user.id };
+  }
+
+  /**
+   * Admin creates an account directly. The address is trusted (the admin vouches for it), so the account is marked
+   * verified and no verification email is sent; the person can use "Forgot password" or be given the password.
+   * `actorIsPlatformAdmin` decides whether the super_admin role may be handed out.
+   */
+  async adminCreateUser(
+    tenantId: string,
+    input: AdminCreateUserInput,
+    actor: { userId: string; isPlatformAdmin: boolean }
+  ): Promise<{ userId: string }> {
+    if (input.role === "super_admin" && !actor.isPlatformAdmin) {
+      throw new AuthorizationError("Only a platform admin can create a platform admin");
+    }
+    const existing = await this.users.findByEmail(tenantId, input.email);
+    if (existing) throw new ConflictError("An account with this email already exists");
+
+    const passwordHash = await hashPassword(input.password);
+    const user = await this.users.create({
+      tenantId,
+      email: input.email,
+      passwordHash,
+      firstName: input.firstName,
+      lastName: input.lastName,
+      phone: input.phone,
+    });
+    const roleSet = await this.users.setRole(user.id, tenantId, input.role);
+    if (!roleSet) {
+      // Unknown role: don't leave a half-made account behind.
+      await this.users.softDelete(user.id, tenantId);
+      throw new ValidationError(`Unknown role "${input.role}"`);
+    }
+    await this.users.markVerifiedNow(user.id);
+    await this.users.writeAudit({
+      tenantId,
+      actorUserId: actor.userId,
+      action: "user.created",
+      resourceId: user.id,
+      metadata: { email: user.email, role: input.role },
+    });
+    await this.events.publish("user.created", { userId: user.id, tenantId, email: user.email });
     return { userId: user.id };
   }
 
@@ -215,7 +258,7 @@ export class AuthService {
     const { user, tenant } = chosen.row;
     if (user.status !== "active") throw new AuthenticationError("This account is not active");
     const isPlatformAdmin = chosen.roles.includes("super_admin");
-    if (!isPlatformAdmin && tenant.status === "suspended") {
+    if (!isPlatformAdmin && (tenant.status === "suspended" || tenant.status === "cancelled")) {
       throw new AuthorizationError("This account is currently suspended. Contact support for assistance.");
     }
 

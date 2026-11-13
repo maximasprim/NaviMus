@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { getSelectedTenant, type SelectedTenant } from "@/lib/tenant-session";
-import { getIsPlatformAdmin, getWorkspace } from "@/lib/session-core";
+import { can, useAccess } from "@/lib/access";
 
 /**
  * Most of this console's pages (bookings, users, moderation, settings)
@@ -12,23 +12,30 @@ import { getIsPlatformAdmin, getWorkspace } from "@/lib/session-core";
  * This is the persistent reminder of which one that currently is, so a
  * super_admin never loses track of whose data they're looking at.
  *
- * A platform admin manages tenants; a tenant admin manages their own operators.
+ * What it links to depends on who is signed in: a platform admin manages
+ * tenants; a tenant admin (or travel manager) manages their own operators;
+ * every other role has neither page, so the box is not shown.
  */
 export function TenantIndicator() {
   const [tenant, setTenant] = useState<SelectedTenant | null>(null);
-  // null until read in the browser (localStorage doesn't exist on the server), so the wrong label never flashes.
-  const [isPlatform, setIsPlatform] = useState<boolean | null>(null);
+  const { access, ready } = useAccess();
 
   useEffect(() => {
     setTenant(getSelectedTenant());
-    // Sessions that began before the flag existed fall back to the workspace: the platform's own tenant is "default".
-    setIsPlatform(getIsPlatformAdmin() ?? getWorkspace() === "default");
   }, []);
 
+  // Unknown access (server couldn't say) behaves as before roles existed: show the platform box.
+  const isPlatform = !access || access.roles.includes("super_admin");
+  const canManageOperators = can(access, { roles: ["admin", "travel_manager"] });
+
+  if (ready && !isPlatform && !canManageOperators) return null;
+
+  const label = !ready ? " " : isPlatform ? "Tenant management" : "Operator management";
+
   return (
-     <Link
-      href={isPlatform === false ? "/operators" : "/tenants"}
-      className="group mb-4 flex cursor-pointer items-center justify-between gap-2 rounded-xl bg-white/5 px-3 py-1.5 transition-colors hover:bg-white/10"
+    <Link
+      href={ready && !isPlatform ? "/operators" : "/tenants"}
+      className="group mb-6 flex cursor-pointer items-center justify-between gap-2 rounded-xl bg-white/5 px-3 py-1.5 transition-colors hover:bg-white/10"
     >
       {tenant ? (
         <span className="min-w-0">
@@ -39,13 +46,13 @@ export function TenantIndicator() {
         </span>
       ) : (
         <span className="text-sm text-gold underline decoration-gold/40 underline-offset-4 group-hover:decoration-gold">
-          {isPlatform === null ? "\u00A0" : isPlatform ? "Tenant management" : "Operator management"}
+          {label}
         </span>
       )}
       <svg
         viewBox="0 0 24 24"
         aria-hidden="true"
-        className="h-4 w-4 shrink-0 rotate-90 fill-none stroke-current stroke-2 text-gold transition-transform group-hover:translate-x-0.5"
+        className="h-5 w-5 shrink-0 rotate-90 fill-none stroke-current stroke-2 text-gold transition-transform group-hover:translate-x-0.5"
         strokeLinecap="round"
         strokeLinejoin="round"
       >

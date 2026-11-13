@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
+import { RouteGuard } from "./route-guard";
 
 /** Pages a signed-out visitor can see. They get no sidebar or menus - only the page itself. */
 const CHROMELESS = ["/login"];
@@ -38,7 +39,9 @@ export function AppShell({ sidebar, children }: { sidebar: ReactNode; children: 
   return (
     <div className="flex h-screen overflow-hidden supports-[height:100dvh]:h-dvh">
       {sidebar}
-      <div className="scroll-light min-w-0 flex-1 overflow-y-auto">{children}</div>
+      <div className="scroll-light min-w-0 flex-1 overflow-y-auto">
+        <RouteGuard>{children}</RouteGuard>
+      </div>
     </div>
   );
 }

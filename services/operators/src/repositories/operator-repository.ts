@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, isNull, schema, sql, withTenant, scopedInsert, type Database } from "@travel/database";
-import type { OperatorSearchQuery, RegisterOperatorInput } from "@travel/validation";
+import type { OperatorSearchQuery, RegisterOperatorInput, UpdateOperatorInput } from "@travel/validation";
 
 function slugify(name: string): string {
   return name
@@ -187,6 +187,147 @@ export class OperatorRepository {
           sql`${schema.operatorDocuments.operatorId} IN (SELECT id FROM ${schema.operators} WHERE ${schema.operators.tenantId} = ${tenantId})`
         )
       )
+      .returning();
+    return row ?? null;
+  }
+
+  /** Staff with their account details (name, email, status) for the admin detail page. */
+  async listStaffWithUsers(operatorId: string) {
+    return this.db
+      .select({
+        userId: schema.operatorUsers.userId,
+        title: schema.operatorUsers.title,
+        email: schema.users.email,
+        firstName: schema.users.firstName,
+        lastName: schema.users.lastName,
+        status: schema.users.status,
+        addedAt: schema.operatorUsers.createdAt,
+      })
+      .from(schema.operatorUsers)
+      .innerJoin(schema.users, eq(schema.operatorUsers.userId, schema.users.id))
+      .where(eq(schema.operatorUsers.operatorId, operatorId));
+  }
+
+  /** Listing and booking totals for one operator. */
+  async stats(operatorId: string) {
+    const [pkg, bk] = await Promise.all([
+      this.db
+        .select({
+          total: sql<number>`count(*)::int`,
+          published: sql<number>`count(*) filter (where ${schema.packages.status} = 'published')::int`,
+        })
+        .from(schema.packages)
+        .where(and(eq(schema.packages.operatorId, operatorId), isNull(schema.packages.deletedAt))),
+      this.db
+        .select({
+          bookings: sql<number>`count(*)::int`,
+          revenue: sql<string>`coalesce(sum(${schema.bookings.amountPaid}), 0)::text`,
+        })
+        .from(schema.bookings)
+        .innerJoin(schema.packages, eq(schema.bookings.packageId, schema.packages.id))
+        .where(eq(schema.packages.operatorId, operatorId)),
+    ]);
+    return {
+      packages: pkg[0]?.total ?? 0,
+      publishedPackages: pkg[0]?.published ?? 0,
+      bookings: bk[0]?.bookings ?? 0,
+      revenuePaid: bk[0]?.revenue ?? "0",
+    };
+  }
+
+  async updateProfile(tenantId: string, operatorId: string, patch: UpdateOperatorInput) {
+    const [row] = await this.db
+      .update(schema.operators)
+      .set({ ...patch, updatedAt: new Date() })
+      .where(withTenant(schema.operators.tenantId, tenantId, eq(schema.operators.id, operatorId), isNull(schema.operators.deletedAt)))
+      .returning();
+    return row ?? null;
+  }
+
+  async setStatus(tenantId: string, operatorId: string, status: "approved" | "pending") {
+    const [row] = await this.db
+      .update(schema.operators)
+      .set({ status, updatedAt: new Date() })
+      .where(withTenant(schema.operators.tenantId, tenantId, eq(schema.operators.id, operatorId), isNull(schema.operators.deletedAt)))
+      .returning();
+    return row ?? null;
+  }
+
+  /**
+   * Soft delete: the operator disappears from every list and can no longer act, and its published packages are
+   * archived so they stop appearing to customers. Bookings, payments and history are kept untouched.
+   */
+  async softDelete(tenantId: string, operatorId: string) {
+    return this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .update(schema.operators)
+        .set({ deletedAt: new Date(), status: "suspended", updatedAt: new Date() })
+        .where(withTenant(schema.operators.tenantId, tenantId, eq(schema.operators.id, operatorId), isNull(schema.operators.deletedAt)))
+        .returning();
+      if (!row) return null;
+      await tx
+        .update(schema.packages)
+        .set({ status: "archived", updatedAt: new Date() })
+        .where(and(eq(schema.packages.operatorId, operatorId), eq(schema.packages.status, "published")));
+      return row;
+    });
+  }
+
+  async removeStaff(operatorId: string, userId: string) {
+    const rows = await this.db
+      .delete(schema.operatorUsers)
+      .where(and(eq(schema.operatorUsers.operatorId, operatorId), eq(schema.operatorUsers.userId, userId)))
+      .returning({ id: schema.operatorUsers.id });
+    return rows.length > 0;
+  }
+
+  async writeAudit(input: {
+    tenantId: string;
+    actorUserId: string;
+    action: string;
+    resourceId: string;
+    metadata?: Record<string, unknown>;
+  }) {
+    await this.db.insert(schema.auditLogs).values({
+      tenantId: input.tenantId,
+      actorUserId: input.actorUserId,
+      action: input.action,
+      resourceType: "operator",
+      resourceId: input.resourceId,
+      metadata: input.metadata,
+    });
+  }
+
+  /** Recent audit entries about this operator, newest first. */
+  async history(operatorId: string, limit = 20) {
+    return this.db
+      .select({
+        id: schema.auditLogs.id,
+        action: schema.auditLogs.action,
+        actorUserId: schema.auditLogs.actorUserId,
+        metadata: schema.auditLogs.metadata,
+        createdAt: schema.auditLogs.createdAt,
+      })
+      .from(schema.auditLogs)
+      .where(and(eq(schema.auditLogs.resourceType, "operator"), eq(schema.auditLogs.resourceId, operatorId)))
+      .orderBy(desc(schema.auditLogs.createdAt))
+      .limit(limit);
+  }
+
+  async listDeleted(tenantId: string) {
+    return this.db
+      .select()
+      .from(schema.operators)
+      .where(withTenant(schema.operators.tenantId, tenantId, sql`${schema.operators.deletedAt} is not null`))
+      .orderBy(desc(schema.operators.deletedAt));
+  }
+
+  /** Undo softDelete. Comes back suspended (its packages stay archived) so an admin consciously reinstates it. */
+  async restore(tenantId: string, operatorId: string) {
+    const [row] = await this.db
+      .update(schema.operators)
+      .set({ deletedAt: null, status: "suspended", updatedAt: new Date() })
+      .where(withTenant(schema.operators.tenantId, tenantId, eq(schema.operators.id, operatorId), sql`${schema.operators.deletedAt} is not null`))
       .returning();
     return row ?? null;
   }

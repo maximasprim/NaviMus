@@ -168,13 +168,16 @@ export class UserRepository {
   }
 
   /** Section 44 (admin: manage users). tenantId is null only for a super_admin's cross-tenant view. */
-  async listAll(tenantId: string | null, page: number, pageSize: number, search?: string) {
+  async listAll(tenantId: string | null, page: number, pageSize: number, search?: string, status?: string, deleted = false) {
     const offset = (page - 1) * pageSize;
     const tenantCondition = tenantId ? eq(schema.users.tenantId, tenantId) : undefined;
     const searchCondition = search
       ? or(ilike(schema.users.email, `%${search}%`), ilike(schema.users.firstName, `%${search}%`), ilike(schema.users.lastName, `%${search}%`))
       : undefined;
-    const conditions = and(...[tenantCondition, searchCondition].filter((c): c is NonNullable<typeof c> => Boolean(c)));
+    const statusCondition = status ? eq(schema.users.status, status) : undefined;
+    const conditions = and(
+      ...[deleted ? sql`${schema.users.deletedAt} is not null` : isNull(schema.users.deletedAt), tenantCondition, searchCondition, statusCondition].filter((c): c is NonNullable<typeof c> => Boolean(c))
+    );
     const [items, countRows] = await Promise.all([
       this.db
         .select({
@@ -186,8 +189,10 @@ export class UserRepository {
           status: schema.users.status,
           emailVerifiedAt: schema.users.emailVerifiedAt,
           createdAt: schema.users.createdAt,
+          tenantName: schema.tenants.name,
         })
         .from(schema.users)
+        .leftJoin(schema.tenants, eq(schema.users.tenantId, schema.tenants.id))
         .where(conditions)
         .orderBy(desc(schema.users.createdAt))
         .limit(pageSize)
@@ -228,5 +233,102 @@ export class UserRepository {
       await tx.insert(schema.userRoles).values({ userId, roleId: role.id });
     });
     return true;
+  }
+
+  /** Everything the admin "user detail" page shows. tenantId null = super_admin (any tenant). */
+  async getDetail(id: string, tenantId: string | null) {
+    const user = tenantId ? await this.findByIdForTenant(id, tenantId) : await this.findById(id);
+    if (!user) return null;
+    const [roles, tenantRows, bookingRows, operatorRows] = await Promise.all([
+      this.getRoleNames(id),
+      this.db
+        .select({ id: schema.tenants.id, name: schema.tenants.name, slug: schema.tenants.slug })
+        .from(schema.tenants)
+        .where(eq(schema.tenants.id, user.tenantId))
+        .limit(1),
+      this.db
+        .select({ count: sql<number>`count(*)::int`, lastAt: sql<string | null>`max(${schema.bookings.createdAt})` })
+        .from(schema.bookings)
+        .where(eq(schema.bookings.userId, id)),
+      this.db
+        .select({ id: schema.operators.id, businessName: schema.operators.businessName, status: schema.operators.status, title: schema.operatorUsers.title })
+        .from(schema.operatorUsers)
+        .innerJoin(schema.operators, eq(schema.operatorUsers.operatorId, schema.operators.id))
+        .where(and(eq(schema.operatorUsers.userId, id), isNull(schema.operators.deletedAt)))
+        .limit(1),
+    ]);
+    const { passwordHash, mfaSecret, ...safe } = user;
+    return {
+      ...safe,
+      roles,
+      tenant: tenantRows[0] ?? null,
+      bookingCount: bookingRows[0]?.count ?? 0,
+      lastBookingAt: bookingRows[0]?.lastAt ?? null,
+      operator: operatorRows[0] ?? null,
+    };
+  }
+
+  async updateProfile(
+    id: string,
+    tenantId: string,
+    patch: { email?: string; firstName?: string; lastName?: string; phone?: string | null }
+  ) {
+    const [row] = await this.db
+      .update(schema.users)
+      .set({ ...patch, updatedAt: new Date() })
+      .where(and(eq(schema.users.id, id), eq(schema.users.tenantId, tenantId), isNull(schema.users.deletedAt)))
+      .returning({ id: schema.users.id });
+    return Boolean(row);
+  }
+
+  /** Marks the account deleted (recoverable by clearing deleted_at). It can no longer sign in; its bookings and history are kept. */
+  async softDelete(id: string, tenantId: string) {
+    const [row] = await this.db
+      .update(schema.users)
+      .set({ deletedAt: new Date(), status: "deactivated", updatedAt: new Date() })
+      .where(and(eq(schema.users.id, id), eq(schema.users.tenantId, tenantId), isNull(schema.users.deletedAt)))
+      .returning({ id: schema.users.id });
+    return Boolean(row);
+  }
+
+  async markVerifiedNow(userId: string) {
+    await this.markEmailVerified(userId);
+  }
+
+  async writeAudit(input: {
+    tenantId: string | null;
+    actorUserId: string;
+    action: string;
+    resourceId: string;
+    metadata?: Record<string, unknown>;
+  }) {
+    await this.db.insert(schema.auditLogs).values({
+      tenantId: input.tenantId ?? undefined,
+      actorUserId: input.actorUserId,
+      action: input.action,
+      resourceType: "user",
+      resourceId: input.resourceId,
+      metadata: input.metadata,
+    });
+  }
+
+  /** The tenant a soft-deleted user belonged to, or null if there is no such deleted user in reach (tenantId null = any). */
+  async findDeletedTenant(id: string, tenantId: string | null) {
+    const [row] = await this.db
+      .select({ tenantId: schema.users.tenantId, email: schema.users.email, roles: sql<string>`''` })
+      .from(schema.users)
+      .where(and(eq(schema.users.id, id), sql`${schema.users.deletedAt} is not null`, tenantId ? eq(schema.users.tenantId, tenantId) : undefined))
+      .limit(1);
+    return row ?? null;
+  }
+
+  /** Undo softDelete. Comes back suspended, not active: an admin should consciously reactivate them. */
+  async restore(id: string, tenantId: string) {
+    const [row] = await this.db
+      .update(schema.users)
+      .set({ deletedAt: null, status: "suspended", updatedAt: new Date() })
+      .where(and(eq(schema.users.id, id), eq(schema.users.tenantId, tenantId), sql`${schema.users.deletedAt} is not null`))
+      .returning({ id: schema.users.id });
+    return Boolean(row);
   }
 }

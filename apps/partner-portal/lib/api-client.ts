@@ -8,7 +8,8 @@ export class ApiError extends Error {
   constructor(
     public readonly code: string,
     message: string,
-    public readonly status: number
+    public readonly status: number,
+    public readonly details?: unknown
   ) {
     super(message);
   }
@@ -57,7 +58,7 @@ export async function apiFetch<T>(path: string, opts: RequestOptions = {}): Prom
 
   const json = (await res.json()) as ApiResponse<T>;
   if (!json.success) {
-    throw new ApiError(json.error.code, json.error.message, res.status);
+    throw new ApiError(json.error.code, json.error.message, res.status, (json.error as { details?: unknown }).details);
   }
   return { data: json.data, meta: (json as any).meta };
 }

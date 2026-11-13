@@ -9,6 +9,7 @@ import {
   reviewOperatorSchema,
   setCommissionRateSchema,
   submitOperatorDocumentSchema,
+  updateOperatorSchema,
 } from "@travel/validation";
 import { ok, paginated } from "@travel/http";
 import { requireAuth, requirePermissions, requireRoles } from "@travel/auth";
@@ -42,11 +43,55 @@ export function buildOperatorRoutes(service: OperatorService) {
     }
   );
 
+  // Soft-deleted operators (for Restore). Registered BEFORE "/:id" so "deleted" isn't taken as an id.
+  app.get("/deleted", requireAuth, requireRoles("admin", "super_admin"), async (c) => ok(c, await service.listDeleted(c.get("tenantId"))));
+
   app.get("/:id", requireAuth, requireRoles("admin", "super_admin", "travel_manager"), async (c) => {
     const id = c.req.param("id");
     if (!id) return c.json({ success: false, error: { code: "VALIDATION_ERROR", message: "Missing id" } }, 400);
     const operator = await service.getById(c.get("tenantId"), id);
     return ok(c, operator);
+  });
+
+  // Full admin view: profile + staff accounts + documents + totals + recent history.
+  app.get("/:id/detail", requireAuth, requireRoles("admin", "super_admin", "travel_manager"), async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.json({ success: false, error: { code: "VALIDATION_ERROR", message: "Missing id" } }, 400);
+    return ok(c, await service.getDetail(c.get("tenantId"), id));
+  });
+
+  app.patch("/:id", requireAuth, requireRoles("admin", "super_admin"), zValidator("json", updateOperatorSchema), async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.json({ success: false, error: { code: "VALIDATION_ERROR", message: "Missing id" } }, 400);
+    const operator = await service.updateProfile(c.get("tenantId"), id, c.req.valid("json"), c.get("authUser").sub);
+    return ok(c, operator);
+  });
+
+  app.post("/:id/reinstate", requireAuth, requireRoles("admin", "super_admin"), async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.json({ success: false, error: { code: "VALIDATION_ERROR", message: "Missing id" } }, 400);
+    return ok(c, await service.reinstate(c.get("tenantId"), id, c.get("authUser").sub));
+  });
+
+  app.post("/:id/restore", requireAuth, requireRoles("admin", "super_admin"), async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.json({ success: false, error: { code: "VALIDATION_ERROR", message: "Missing id" } }, 400);
+    return ok(c, await service.restore(c.get("tenantId"), id, c.get("authUser").sub));
+  });
+
+  app.delete("/:id", requireAuth, requireRoles("admin", "super_admin"), async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.json({ success: false, error: { code: "VALIDATION_ERROR", message: "Missing id" } }, 400);
+    await service.remove(c.get("tenantId"), id, c.get("authUser").sub);
+    return ok(c, { deleted: true });
+  });
+
+  app.delete("/:id/staff/:userId", requireAuth, requireRoles("admin", "super_admin"), async (c) => {
+    const id = c.req.param("id");
+    const userId = c.req.param("userId");
+    if (!id || !userId) return c.json({ success: false, error: { code: "VALIDATION_ERROR", message: "Missing id" } }, 400);
+    await service.removeStaff(c.get("tenantId"), id, userId, c.get("authUser").sub);
+    return ok(c, { removed: true });
   });
 
   app.post(

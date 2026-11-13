@@ -4,11 +4,18 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { listPendingApprovals, approveDestination, approvePackage, type PendingApprovals } from "@/lib/api";
 import { getToken, isLoggedIn } from "@/lib/session";
+import { useCan, useReadOnly } from "@/lib/access";
+import { ACTIONS } from "@/lib/access-rules";
 
 export default function ApprovalsPage() {
   const [pending, setPending] = useState<PendingApprovals | null>(null);
   const [loggedIn, setLoggedIn] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // Each kind of submission has its own approvers: destination managers for destinations, travel managers for packages.
+  const canApproveDestinations = useCan(ACTIONS.approveDestinations);
+  const canApprovePackages = useCan(ACTIONS.approvePackages);
+  const destinationsReadOnly = useReadOnly(ACTIONS.approveDestinations);
+  const packagesReadOnly = useReadOnly(ACTIONS.approvePackages);
 
   function load() {
     if (!isLoggedIn()) {
@@ -64,11 +71,13 @@ export default function ApprovalsPage() {
         <>
           <section className="mt-8">
             <h2 className="font-display text-lg text-ink-horizon">Destinations</h2>
+            {destinationsReadOnly && <p className="mt-1 text-xs text-ink/40">View only: destinations are approved by destination managers and administrators.</p>}
             {pending.destinations.length === 0 && <p className="mt-2 text-sm text-ink/50">Nothing pending.</p>}
             <ul className="mt-3 space-y-2">
               {pending.destinations.map((d) => (
                 <li key={d.id} className="flex items-center justify-between rounded-lg border border-ink-horizon/10 bg-white px-4 py-3">
                   <span>{d.name}</span>
+                  {canApproveDestinations && (
                   <div className="flex gap-2">
                     <button
                       onClick={() => handleDestination(d.id, "rejected")}
@@ -85,6 +94,7 @@ export default function ApprovalsPage() {
                       Approve
                     </button>
                   </div>
+                  )}
                 </li>
               ))}
             </ul>
@@ -92,11 +102,13 @@ export default function ApprovalsPage() {
 
           <section className="mt-10">
             <h2 className="font-display text-lg text-ink-horizon">Packages</h2>
+            {packagesReadOnly && <p className="mt-1 text-xs text-ink/40">View only: packages are approved by travel managers and administrators.</p>}
             {pending.packages.length === 0 && <p className="mt-2 text-sm text-ink/50">Nothing pending.</p>}
             <ul className="mt-3 space-y-2">
               {pending.packages.map((p) => (
                 <li key={p.id} className="flex items-center justify-between rounded-lg border border-ink-horizon/10 bg-white px-4 py-3">
                   <span>{p.name}</span>
+                  {canApprovePackages && (
                   <div className="flex gap-2">
                     <button
                       onClick={() => handlePackage(p.id, "rejected")}
@@ -113,6 +125,7 @@ export default function ApprovalsPage() {
                       Approve
                     </button>
                   </div>
+                  )}
                 </li>
               ))}
             </ul>

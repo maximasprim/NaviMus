@@ -99,6 +99,51 @@ export class BookingRepository {
       .where(eq(schema.bookingTravelers.bookingId, bookingId));
   }
 
+  /** The travelers on a booking WITH their profile details (never the encrypted passport number, only whether one is on file). */
+  async getTravelerDetails(bookingId: string) {
+    const rows = await this.db
+      .select({
+        id: schema.bookingTravelers.id,
+        travelerId: schema.bookingTravelers.travelerId,
+        travelerType: schema.bookingTravelers.travelerType,
+        priceAmount: schema.bookingTravelers.priceAmount,
+        currency: schema.bookingTravelers.currency,
+        firstName: schema.travelers.firstName,
+        lastName: schema.travelers.lastName,
+        dateOfBirth: schema.travelers.dateOfBirth,
+        gender: schema.travelers.gender,
+        nationality: schema.travelers.nationality,
+        hasPassport: sql<boolean>`${schema.travelers.passportNumberEncrypted} is not null`,
+        passportExpiryDate: schema.travelers.passportExpiryDate,
+        phone: schema.travelers.phone,
+        email: schema.travelers.email,
+        emergencyContactName: schema.travelers.emergencyContactName,
+        emergencyContactPhone: schema.travelers.emergencyContactPhone,
+        dietaryRequirements: schema.travelers.dietaryRequirements,
+        accessibilityRequirements: schema.travelers.accessibilityRequirements,
+      })
+      .from(schema.bookingTravelers)
+      .innerJoin(schema.travelers, eq(schema.travelers.id, schema.bookingTravelers.travelerId))
+      .where(eq(schema.bookingTravelers.bookingId, bookingId));
+    return rows;
+  }
+
+  /** Updates the traveler profile behind one line of this booking. Returns null if that line isn't on this booking. */
+  async updateTravelerOnBooking(bookingId: string, bookingTravelerId: string, patch: Record<string, unknown>) {
+    const [link] = await this.db
+      .select({ travelerId: schema.bookingTravelers.travelerId })
+      .from(schema.bookingTravelers)
+      .where(and(eq(schema.bookingTravelers.id, bookingTravelerId), eq(schema.bookingTravelers.bookingId, bookingId)))
+      .limit(1);
+    if (!link) return null;
+    const [row] = await this.db
+      .update(schema.travelers)
+      .set({ ...patch, updatedAt: new Date() })
+      .where(eq(schema.travelers.id, link.travelerId))
+      .returning({ id: schema.travelers.id });
+    return row ?? null;
+  }
+
   async getStatusHistory(bookingId: string) {
     return this.db
       .select()
@@ -121,5 +166,28 @@ export class BookingRepository {
         .from(schema.bookings)
         .where(and(lte(schema.bookings.holdExpiresAt, now), inArray(schema.bookings.status, statuses)))
     );
+  }
+
+  async updateDetails(
+    id: string,
+    patch: { contactEmail?: string; contactPhone?: string; specialRequests?: string | null; travelDate?: string }
+  ) {
+    const [row] = await this.db
+      .update(schema.bookings)
+      .set({ ...patch, updatedAt: new Date() })
+      .where(eq(schema.bookings.id, id))
+      .returning();
+    return row ?? null;
+  }
+
+  async writeAudit(input: { tenantId: string; actorUserId: string; action: string; resourceId: string; metadata?: Record<string, unknown> }) {
+    await this.db.insert(schema.auditLogs).values({
+      tenantId: input.tenantId,
+      actorUserId: input.actorUserId,
+      action: input.action,
+      resourceType: "booking",
+      resourceId: input.resourceId,
+      metadata: input.metadata,
+    });
   }
 }

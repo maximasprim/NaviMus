@@ -35,10 +35,11 @@ export class SupportTicketRepository {
    * tenant-B's support queue. tenantId is null only for a super_admin's
    * cross-tenant view.
    */
-  async listAll(tenantId: string | null, status?: string) {
+  async listAll(tenantId: string | null, status?: string, userId?: string) {
     const conditions = [
       tenantId ? eq(schema.users.tenantId, tenantId) : undefined,
       status ? eq(schema.supportTickets.status, status) : undefined,
+      userId ? eq(schema.supportTickets.userId, userId) : undefined,
     ].filter((c): c is NonNullable<typeof c> => Boolean(c));
     const rows = await this.db
       .select({ ticket: schema.supportTickets })

@@ -67,6 +67,16 @@ export class TenantRepository {
     return row ?? null;
   }
 
+  /** Archive = take a tenant out of service but keep every row, so it can be restored. Same lock-out as suspend. */
+  async archive(id: string, reason: string | undefined) {
+    const [row] = await this.db
+      .update(schema.tenants)
+      .set({ status: "cancelled", suspendedAt: new Date(), suspendedReason: reason, updatedAt: new Date() })
+      .where(eq(schema.tenants.id, id))
+      .returning();
+    return row ?? null;
+  }
+
   async reactivate(id: string) {
     const [row] = await this.db
       .update(schema.tenants)

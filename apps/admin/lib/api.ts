@@ -9,6 +9,7 @@ export interface Tenant {
   status: "active" | "suspended" | "trial" | "cancelled";
   settings?: Record<string, unknown> | null;
   ownerUserId?: string | null;
+  planId?: string | null;
   suspendedAt?: string | null;
   suspendedReason?: string | null;
   createdAt: string;
@@ -77,6 +78,16 @@ export async function updateTenant(token: string, id: string, input: { name?: st
 
 export async function suspendTenant(token: string, id: string, reason?: string) {
   const { data } = await apiFetch<Tenant>(`/api/v1/platform/tenants/${id}/suspend`, {
+    method: "POST",
+    token,
+    body: { reason },
+    includeTenant: false,
+  });
+  return data;
+}
+
+export async function archiveTenant(token: string, id: string, reason?: string) {
+  const { data } = await apiFetch<Tenant>(`/api/v1/platform/tenants/${id}/archive`, {
     method: "POST",
     token,
     body: { reason },
@@ -260,7 +271,7 @@ export interface Operator {
   businessName: string;
   status: "pending" | "approved" | "rejected" | "suspended";
   contactEmail: string;
-  contactPhone?: string;
+  contactPhone?: string | null;
   createdAt: string;
 }
 
@@ -308,8 +319,21 @@ export async function getDashboardTimeSeries(token: string, range: { from?: stri
   return data;
 }
 
+export type OperatorStatus = Operator["status"];
+
+/** Operators in one status (the operators page's tabs). pageSize 100 is the API's maximum. */
+export async function listOperatorsByStatus(token: string, status: OperatorStatus) {
+  const { data } = await apiFetch<Operator[]>(`/api/v1/operators?status=${status}&pageSize=100`, { token });
+  return data;
+}
+
 export async function listPendingOperators(token: string) {
-  const { data } = await apiFetch<Operator[]>(`/api/v1/operators?status=pending`, { token });
+  return listOperatorsByStatus(token, "pending");
+}
+
+/** Suspends an approved operator. (The API has no "reinstate" action yet.) */
+export async function suspendOperator(token: string, id: string) {
+  const { data } = await apiFetch<Operator>(`/api/v1/operators/${id}/suspend`, { method: "POST", token });
   return data;
 }
 
@@ -361,6 +385,8 @@ export interface AdminBooking {
   totalAmount: string;
   currency: string;
   contactEmail: string;
+  contactPhone?: string;
+  specialRequests?: string | null;
   createdAt: string;
 }
 
@@ -413,11 +439,22 @@ export interface AdminUser {
   status: "active" | "suspended" | "deactivated";
   emailVerifiedAt: string | null;
   createdAt: string;
+  tenantId?: string;
+  tenantName?: string | null;
 }
 
-export async function listUsers(token: string, page = 1, pageSize = 20, search?: string) {
+export async function listUsers(
+  token: string,
+  page = 1,
+  pageSize = 20,
+  search?: string,
+  filters: { status?: string; tenantId?: string; deleted?: boolean } = {}
+) {
   const qs = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
   if (search) qs.set("search", search);
+  if (filters.status) qs.set("status", filters.status);
+  if (filters.tenantId) qs.set("tenantId", filters.tenantId);
+  if (filters.deleted) qs.set("deleted", "true");
   const { data, meta } = await apiFetch<AdminUser[]>(`/api/v1/auth/admin/users?${qs.toString()}`, { token });
   return { items: data, meta };
 }
@@ -656,8 +693,11 @@ export interface AdminSupportTicket {
   updatedAt: string;
 }
 
-export async function listAllSupportTickets(token: string, status?: string) {
-  const qs = status ? `?status=${status}` : "";
+export async function listAllSupportTickets(token: string, status?: string, userId?: string) {
+  const params = new URLSearchParams();
+  if (status) params.set("status", status);
+  if (userId) params.set("userId", userId);
+  const qs = params.toString() ? `?${params.toString()}` : "";
   const { data } = await apiFetch<AdminSupportTicket[]>(`/api/v1/account/admin/support-tickets${qs}`, { token });
   return data;
 }
@@ -700,5 +740,454 @@ export async function logout(): Promise<void> {
     /* already signed out / API unreachable: still sign out locally */
   } finally {
     clearSessionMarker();
+  }
+}
+
+
+// ===================== Admin: full detail views + create / edit / delete =====================
+
+// --- Users ---
+export interface AdminUserDetail extends AdminUser {
+  phone: string | null;
+  nationality: string | null;
+  mfaEnabled: boolean;
+  updatedAt: string;
+  roles: string[];
+  tenant: { id: string; name: string; slug: string } | null;
+  bookingCount: number;
+  lastBookingAt: string | null;
+  operator: { id: string; businessName: string; status: string; title: string | null } | null;
+}
+
+export async function getUserDetail(token: string, id: string) {
+  const { data } = await apiFetch<AdminUserDetail>(`/api/v1/auth/admin/users/${id}`, { token });
+  return data;
+}
+
+export async function createUser(
+  token: string,
+  input: { email: string; password: string; firstName: string; lastName: string; phone?: string; role: string; tenantId?: string }
+) {
+  const { data } = await apiFetch<{ userId: string }>("/api/v1/auth/admin/users", { method: "POST", token, body: input });
+  return data;
+}
+
+export async function updateUser(
+  token: string,
+  id: string,
+  patch: { email?: string; firstName?: string; lastName?: string; phone?: string | null }
+) {
+  const { data } = await apiFetch<{ message: string }>(`/api/v1/auth/admin/users/${id}`, { method: "PATCH", token, body: patch });
+  return data;
+}
+
+export async function deleteUser(token: string, id: string) {
+  const { data } = await apiFetch<{ message: string }>(`/api/v1/auth/admin/users/${id}`, { method: "DELETE", token });
+  return data;
+}
+
+// --- Operators ---
+export interface OperatorDetail extends Operator {
+  slug: string;
+  description: string | null;
+  commissionRatePercent: string | null;
+  approvedAt: string | null;
+  updatedAt: string;
+  staff: { userId: string; title: string | null; email: string; firstName: string; lastName: string; status: string; addedAt: string }[];
+  documents: { id: string; documentType: string; storageKey: string; status: string; createdAt: string }[];
+  stats: { packages: number; publishedPackages: number; bookings: number; revenuePaid: string };
+  history: { id: string; action: string; actorUserId: string | null; metadata: Record<string, unknown> | null; createdAt: string }[];
+}
+
+export async function getOperatorDetail(token: string, id: string) {
+  const { data } = await apiFetch<OperatorDetail>(`/api/v1/operators/${id}/detail`, { token });
+  return data;
+}
+
+export async function updateOperator(
+  token: string,
+  id: string,
+  patch: { businessName?: string; contactEmail?: string; contactPhone?: string | null; description?: string | null }
+) {
+  const { data } = await apiFetch<Operator>(`/api/v1/operators/${id}`, { method: "PATCH", token, body: patch });
+  return data;
+}
+
+/** Suspended -> approved again; rejected -> back to pending. */
+export async function reinstateOperator(token: string, id: string) {
+  const { data } = await apiFetch<Operator>(`/api/v1/operators/${id}/reinstate`, { method: "POST", token });
+  return data;
+}
+
+export async function deleteOperator(token: string, id: string) {
+  await apiFetch<{ deleted: boolean }>(`/api/v1/operators/${id}`, { method: "DELETE", token });
+}
+
+export async function removeOperatorStaff(token: string, operatorId: string, userId: string) {
+  await apiFetch<{ removed: boolean }>(`/api/v1/operators/${operatorId}/staff/${userId}`, { method: "DELETE", token });
+}
+
+export async function reviewOperatorDocument(token: string, documentId: string, decision: "approved" | "rejected") {
+  await apiFetch(`/api/v1/operators/documents/${documentId}/review`, { method: "POST", token, body: { decision } });
+}
+
+// --- Listings (destinations & packages) ---
+export type ListingKind = "destination" | "package" | "accommodation" | "transport";
+export type ListingStatus = "draft" | "pending_review" | "published" | "rejected" | "archived";
+export interface ListingRow {
+  id: string;
+  tenantId: string;
+  name: string;
+  slug: string;
+  status: ListingStatus;
+  featured: boolean;
+  createdAt: string;
+  operatorName?: string | null;
+  durationDays?: number;
+}
+export interface ListingDetail extends ListingRow {
+  description: string | null;
+  shortDescription: string | null;
+  contactPhone?: string | null;
+}
+
+export async function listListings(
+  token: string,
+  kind: ListingKind,
+  params: { page?: number; pageSize?: number; search?: string; status?: string; deleted?: boolean } = {}
+) {
+  const qs = new URLSearchParams({ page: String(params.page ?? 1), pageSize: String(params.pageSize ?? 20) });
+  if (params.search) qs.set("search", params.search);
+  if (params.status) qs.set("status", params.status);
+  if (params.deleted) qs.set("deleted", "true");
+  const { data, meta } = await apiFetch<ListingRow[]>(`/api/v1/admin/listings/${kind}s?${qs.toString()}`, { token });
+  return { items: data, meta };
+}
+
+export async function getListing(token: string, kind: ListingKind, id: string) {
+  const { data } = await apiFetch<ListingDetail>(`/api/v1/admin/listings/${kind}s/${id}`, { token });
+  return data;
+}
+
+export async function updateListing(
+  token: string,
+  kind: ListingKind,
+  id: string,
+  patch: { name?: string; shortDescription?: string | null; description?: string | null; status?: ListingStatus; featured?: boolean; contactPhone?: string | null }
+) {
+  const { data } = await apiFetch<ListingDetail>(`/api/v1/admin/listings/${kind}s/${id}`, { method: "PATCH", token, body: patch });
+  return data;
+}
+
+export async function deleteListing(token: string, kind: ListingKind, id: string) {
+  await apiFetch<{ deleted: boolean }>(`/api/v1/admin/listings/${kind}s/${id}`, { method: "DELETE", token });
+}
+
+// --- Tenants (platform admin): edit + users of one tenant ---
+export async function listTenantUsers(token: string, tenantId: string, page = 1, pageSize = 50) {
+  const { data, meta } = await apiFetch<AdminUser[]>(
+    `/api/v1/auth/admin/users?tenantId=${tenantId}&page=${page}&pageSize=${pageSize}`,
+    { token }
+  );
+  return { items: data, meta };
+}
+
+// --- Bookings: edit non-financial details ---
+export async function updateAdminBooking(
+  token: string,
+  id: string,
+  patch: { contactEmail?: string; contactPhone?: string; specialRequests?: string | null; travelDate?: string }
+) {
+  const { data } = await apiFetch<AdminBooking>(`/api/v1/bookings/admin/${id}`, { method: "PATCH", token, body: patch });
+  return data;
+}
+
+/**
+ * Uploads a listing's featured image straight to storage (two steps: a signed upload URL from the media service,
+ * then a PUT) and returns the storage key to save on the listing. Throws an Error fit to show the admin.
+ */
+export async function uploadListingImage(token: string, kind: "destination" | "package", file: File, onProgress?: (fraction: number) => void): Promise<string> {
+  const TYPES = ["image/jpeg", "image/png", "image/webp", "image/avif"];
+  const MAX = 10 * 1024 * 1024;
+  if (!TYPES.includes(file.type)) throw new Error("Please choose a JPG, PNG, WebP or AVIF image.");
+  if (file.size > MAX) throw new Error(`That image is ${(file.size / (1024 * 1024)).toFixed(1)}MB. The limit is 10MB.`);
+  const { data } = await apiFetch<{ uploadUrl: string; storageKey: string; requiredHeaders?: Record<string, string> }>("/api/v1/media/upload-url", {
+    method: "POST",
+    token,
+    body: { category: kind === "destination" ? "destination_image" : "package_image", fileName: file.name.slice(0, 255), contentType: file.type, sizeBytes: file.size },
+  });
+  await new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", data.uploadUrl);
+    for (const [k, v] of Object.entries(data.requiredHeaders ?? { "Content-Type": file.type })) xhr.setRequestHeader(k, v);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress?.(e.loaded / e.total);
+    };
+    xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`Upload failed (${xhr.status}). Please try again.`)));
+    xhr.onerror = () => reject(new Error("Upload failed - check your connection and try again."));
+    xhr.send(file);
+  });
+  return data.storageKey;
+}
+
+export async function updateBookingTraveler(token: string, bookingId: string, travelerLineId: string, patch: Record<string, unknown>) {
+  const { data } = await apiFetch<Record<string, any>>(`/api/v1/bookings/admin/${bookingId}/travelers/${travelerLineId}`, { method: "PATCH", token, body: patch });
+  return data;
+}
+
+// --- Restore soft-deleted records ---
+export async function restoreUser(token: string, id: string) {
+  await apiFetch(`/api/v1/auth/admin/users/${id}/restore`, { method: "POST", token });
+}
+
+export async function listDeletedOperators(token: string) {
+  const { data } = await apiFetch<Operator[]>("/api/v1/operators/deleted", { token });
+  return data;
+}
+
+export async function restoreOperator(token: string, id: string) {
+  await apiFetch(`/api/v1/operators/${id}/restore`, { method: "POST", token });
+}
+
+export async function restoreListing(token: string, kind: ListingKind, id: string) {
+  await apiFetch(`/api/v1/admin/listings/${kind}s/${id}/restore`, { method: "POST", token });
+}
+
+// ===================== Records: history, payments, invoices, reviews, coupons, promotions, listing detail =====================
+type Row = Record<string, any>;
+const qsOf = (o: Record<string, string | number | boolean | undefined>) => {
+  const p = new URLSearchParams();
+  for (const [k, v] of Object.entries(o)) if (v !== undefined && v !== "" && v !== false) p.set(k, String(v));
+  return p.toString();
+};
+
+// --- History of any record ---
+export type HistoryType = "user" | "operator" | "booking" | "destination" | "package" | "accommodation" | "transport" | "coupon" | "promotion" | "review";
+export interface HistoryEntry {
+  id: string;
+  action: string;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+  actorUserId: string | null;
+  actorEmail: string | null;
+  actorFirstName: string | null;
+  actorLastName: string | null;
+}
+export async function listHistory(token: string, resourceType: HistoryType, resourceId: string, page = 1) {
+  const { data, meta } = await apiFetch<HistoryEntry[]>(`/api/v1/admin/records/history?${qsOf({ resourceType, resourceId, page, pageSize: 15 })}`, { token });
+  return { items: data, meta };
+}
+
+// --- Payments & invoices ---
+export interface PaymentRow {
+  id: string;
+  bookingId: string;
+  provider: string;
+  status: string;
+  originalAmount: string;
+  originalCurrency: string;
+  baseCurrencyAmount: string;
+  baseCurrency: string;
+  providerReceipt: string | null;
+  createdAt: string;
+}
+export async function listPaymentsAdmin(token: string, p: { page?: number; status?: string; provider?: string; search?: string } = {}) {
+  const { data, meta } = await apiFetch<PaymentRow[]>(`/api/v1/admin/records/payments?${qsOf({ pageSize: 25, ...p })}`, { token });
+  return { items: data, meta };
+}
+export interface PaymentDetail extends PaymentRow {
+  exchangeRate: string | null;
+  transactions: Row[];
+  refunds: Row[];
+  booking: { id: string; status: string; contactEmail: string; userId: string; totalAmount: string; amountPaid: string; currency: string } | null;
+}
+export async function getPaymentDetail(token: string, id: string) {
+  const { data } = await apiFetch<PaymentDetail>(`/api/v1/admin/records/payments/${id}`, { token });
+  return data;
+}
+export interface InvoiceRow {
+  id: string;
+  invoiceNumber: string;
+  bookingId: string;
+  contactEmail: string | null;
+  totalAmount: string;
+  amountPaid: string;
+  balanceDue: string;
+  currency: string;
+  createdAt: string;
+}
+export async function listInvoicesAdmin(token: string, p: { page?: number; search?: string; unpaidOnly?: boolean } = {}) {
+  const { data, meta } = await apiFetch<InvoiceRow[]>(`/api/v1/admin/records/invoices?${qsOf({ pageSize: 25, ...p, unpaidOnly: p.unpaidOnly ? "true" : undefined })}`, { token });
+  return { items: data, meta };
+}
+export async function listTenantBillingEvents(token: string, tenantId: string) {
+  const { data } = await apiFetch<{ id: string; type: string; outcome: string | null; createdAt: string }[]>(`/api/v1/admin/records/tenants/${tenantId}/billing-events`, { token });
+  return data;
+}
+
+// --- Reviews (every status) ---
+export interface ReviewRow {
+  id: string;
+  userId: string;
+  userEmail: string | null;
+  userFirstName: string | null;
+  userLastName: string | null;
+  bookingId: string | null;
+  subjectType: string;
+  subjectId: string;
+  rating: number;
+  title: string | null;
+  body: string | null;
+  status: string;
+  reportCount: number;
+  operatorResponse: string | null;
+  createdAt: string;
+}
+export async function listReviewsAdmin(token: string, p: { page?: number; status?: string; rating?: number; reportedOnly?: boolean; search?: string } = {}) {
+  const { data, meta } = await apiFetch<ReviewRow[]>(`/api/v1/admin/records/reviews?${qsOf({ pageSize: 20, ...p, reportedOnly: p.reportedOnly ? "true" : undefined })}`, { token });
+  return { items: data, meta };
+}
+
+// --- Coupons & promotions ---
+export interface Coupon {
+  id: string;
+  code: string;
+  discountType: "percentage" | "fixed_amount";
+  discountValue: string;
+  currency: string | null;
+  maxUses: number | null;
+  usedCount: number;
+  minBookingAmount: string | null;
+  validFrom: string | null;
+  validUntil: string | null;
+  isActive: boolean;
+}
+export type CouponInput = {
+  code: string;
+  discountType: "percentage" | "fixed_amount";
+  discountValue: number;
+  currency?: string | null;
+  maxUses?: number | null;
+  minBookingAmount?: number | null;
+  validFrom?: string | null;
+  validUntil?: string | null;
+  isActive?: boolean;
+};
+export async function listCoupons(token: string, p: { page?: number; search?: string } = {}) {
+  const { data, meta } = await apiFetch<Coupon[]>(`/api/v1/admin/records/coupons?${qsOf({ pageSize: 25, ...p })}`, { token });
+  return { items: data, meta };
+}
+export async function createCoupon(token: string, body: CouponInput) {
+  const { data } = await apiFetch<Coupon>("/api/v1/admin/records/coupons", { method: "POST", token, body });
+  return data;
+}
+export async function updateCoupon(token: string, id: string, body: Partial<CouponInput>) {
+  const { data } = await apiFetch<Coupon>(`/api/v1/admin/records/coupons/${id}`, { method: "PATCH", token, body });
+  return data;
+}
+export async function deleteCoupon(token: string, id: string) {
+  await apiFetch(`/api/v1/admin/records/coupons/${id}`, { method: "DELETE", token });
+}
+
+export interface PromotionRule { id: string; conditionKey: string; conditionValue: string; discountType: string; discountValue: string }
+export interface Promotion {
+  id: string;
+  name: string;
+  type: string;
+  description: string | null;
+  startsAt: string | null;
+  endsAt: string | null;
+  isActive: boolean;
+  rules: PromotionRule[];
+}
+export type PromotionInput = {
+  name: string;
+  type: string;
+  description?: string | null;
+  startsAt?: string | null;
+  endsAt?: string | null;
+  isActive?: boolean;
+  rules?: { conditionKey: string; conditionValue: string; discountType: string; discountValue: number }[];
+};
+export async function listPromotions(token: string) {
+  const { data } = await apiFetch<Promotion[]>("/api/v1/admin/records/promotions", { token });
+  return data;
+}
+export async function createPromotion(token: string, body: PromotionInput) {
+  const { data } = await apiFetch<Promotion>("/api/v1/admin/records/promotions", { method: "POST", token, body });
+  return data;
+}
+export async function updatePromotion(token: string, id: string, body: Partial<Omit<PromotionInput, "rules">>) {
+  const { data } = await apiFetch<Promotion>(`/api/v1/admin/records/promotions/${id}`, { method: "PATCH", token, body });
+  return data;
+}
+export async function deletePromotion(token: string, id: string) {
+  await apiFetch(`/api/v1/admin/records/promotions/${id}`, { method: "DELETE", token });
+}
+export async function addPromotionRule(token: string, id: string, body: { conditionKey: string; conditionValue: string; discountType: string; discountValue: number }) {
+  const { data } = await apiFetch<PromotionRule>(`/api/v1/admin/records/promotions/${id}/rules`, { method: "POST", token, body });
+  return data;
+}
+export async function deletePromotionRule(token: string, ruleId: string) {
+  await apiFetch(`/api/v1/admin/records/promotion-rules/${ruleId}`, { method: "DELETE", token });
+}
+
+// --- Everything linked to one user / operator ---
+export interface UserOverview {
+  bookings: { id: string; status: string; travelDate: string; totalAmount: string; amountPaid: string; currency: string; packageName: string | null; createdAt: string }[];
+  payments: { id: string; bookingId: string; provider: string; status: string; originalAmount: string; originalCurrency: string; createdAt: string }[];
+  travelers: { id: string; firstName: string; lastName: string; dateOfBirth: string | null; nationality: string | null; email: string | null; phone: string | null; hasPassport: boolean; passportExpiryDate: string | null; dietaryRequirements: string | null }[];
+  reviewCount: number;
+}
+export async function getUserOverview(token: string, id: string) {
+  const { data } = await apiFetch<UserOverview>(`/api/v1/admin/records/users/${id}/overview`, { token });
+  return data;
+}
+export interface OperatorOverview {
+  packages: { id: string; name: string; status: string; featured: boolean; durationDays: number; bookings: number }[];
+  accommodations: { id: string; name: string; type: string; status: string }[];
+  transportProviders: { id: string; name: string; contactPhone: string | null }[];
+  recentBookings: { id: string; status: string; travelDate: string; totalAmount: string; currency: string; packageName: string | null; createdAt: string }[];
+}
+export async function getOperatorOverview(token: string, id: string) {
+  const { data } = await apiFetch<OperatorOverview>(`/api/v1/admin/records/operators/${id}/overview`, { token });
+  return data;
+}
+
+// --- One listing in full + its child records ---
+export async function getListingFull(token: string, kind: ListingKind, id: string) {
+  const { data } = await apiFetch<Row>(`/api/v1/admin/records/listing/${kind}/${id}`, { token });
+  return data;
+}
+export async function updateListingFields(token: string, kind: ListingKind, id: string, body: Row) {
+  const { data } = await apiFetch<Row>(`/api/v1/admin/records/listing/${kind}/${id}`, { method: "PATCH", token, body });
+  return data;
+}
+export type ChildName =
+  | "package-prices" | "package-availability" | "package-itinerary" | "package-inclusions" | "package-exclusions"
+  | "package-activities" | "room-types" | "rooms" | "vehicles" | "routes";
+export async function listChildren(token: string, name: ChildName, parentId: string) {
+  const { data } = await apiFetch<Row[]>(`/api/v1/admin/records/children/${name}?parentId=${parentId}`, { token });
+  return data;
+}
+export async function createChild(token: string, name: ChildName, parentId: string, body: Row) {
+  const { data } = await apiFetch<Row>(`/api/v1/admin/records/children/${name}`, { method: "POST", token, body: { ...body, parentId } });
+  return data;
+}
+export async function updateChild(token: string, name: ChildName, id: string, body: Row) {
+  const { data } = await apiFetch<Row>(`/api/v1/admin/records/children/${name}/${id}`, { method: "PATCH", token, body });
+  return data;
+}
+export async function deleteChild(token: string, name: ChildName, id: string) {
+  await apiFetch(`/api/v1/admin/records/children/${name}/${id}`, { method: "DELETE", token });
+}
+
+/** Turns an image's storage key into a viewable URL (used for previews). Returns null if it can't be resolved. */
+export async function getMediaUrl(token: string, storageKey: string): Promise<string | null> {
+  try {
+    const { data } = await apiFetch<{ url?: string } | string>(`/api/v1/media/public-url/${storageKey}`, { token });
+    return typeof data === "string" ? data : data?.url ?? null;
+  } catch {
+    return null;
   }
 }

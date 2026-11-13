@@ -1,5 +1,5 @@
-import { and, desc, eq, isNull, schema, sql, withTenant, scopedInsert, type Database } from "@travel/database";
-import type { CreateCancellationPolicyInput } from "@travel/validation";
+import { and, desc, eq, ilike, isNull, schema, sql, withTenant, scopedInsert, type Database } from "@travel/database";
+import type { CreateCancellationPolicyInput, ListingKind, UpdateListingInput } from "@travel/validation";
 
 export class AdminOperationsRepository {
   constructor(private readonly db: Database) {}
@@ -277,5 +277,109 @@ export class AdminOperationsRepository {
       )
       .returning();
     return created!;
+  }
+
+  // --- Listings management: destinations, packages, accommodation and transport providers.
+  // tenantId null = platform admin (all tenants). Soft-deleted rows are hidden unless `deleted` is asked for. ---
+  private listingTable(kind: ListingKind): any {
+    switch (kind) {
+      case "destination": return schema.destinations;
+      case "package": return schema.packages;
+      case "accommodation": return schema.accommodations;
+      case "transport": return schema.transportProviders;
+    }
+  }
+
+  /** Which fields each kind really has, so an edit never writes a column that doesn't exist. */
+  private static readonly EDITABLE: Record<ListingKind, (keyof UpdateListingInput)[]> = {
+    destination: ["name", "shortDescription", "description", "status", "featured"],
+    package: ["name", "shortDescription", "description", "status", "featured"],
+    accommodation: ["name", "description", "status"],
+    transport: ["name", "contactPhone"],
+  };
+  private static readonly HAS_STATUS: Record<ListingKind, boolean> = { destination: true, package: true, accommodation: true, transport: false };
+
+  private listingScope(kind: ListingKind, tenantId: string | null, id?: string, deleted = false) {
+    const t = this.listingTable(kind);
+    return and(
+      id ? eq(t.id, id) : undefined,
+      deleted ? sql`${t.deletedAt} is not null` : isNull(t.deletedAt),
+      tenantId ? eq(t.tenantId, tenantId) : undefined
+    );
+  }
+
+  async listListings(
+    kind: ListingKind,
+    tenantId: string | null,
+    q: { page: number; pageSize: number; search?: string; status?: string; deleted?: boolean }
+  ) {
+    const t = this.listingTable(kind);
+    const where = and(
+      this.listingScope(kind, tenantId, undefined, q.deleted),
+      q.status && AdminOperationsRepository.HAS_STATUS[kind] ? eq(t.status, q.status) : undefined,
+      q.search ? ilike(t.name, `%${q.search}%`) : undefined
+    );
+    const hasOperator = kind !== "destination";
+    const base = this.db
+      .select({
+        id: t.id,
+        tenantId: t.tenantId,
+        name: t.name,
+        slug: kind === "transport" ? sql<string | null>`null` : t.slug,
+        status: AdminOperationsRepository.HAS_STATUS[kind] ? t.status : sql<string>`'active'`,
+        featured: kind === "destination" || kind === "package" ? t.featured : sql<boolean>`false`,
+        createdAt: t.createdAt,
+        operatorName: hasOperator ? schema.operators.businessName : sql<string | null>`null`,
+        durationDays: kind === "package" ? t.durationDays : sql<number | null>`null`,
+      })
+      .from(t);
+    const joined = hasOperator ? base.leftJoin(schema.operators, eq(t.operatorId, schema.operators.id)) : base;
+    const [items, count] = await Promise.all([
+      (joined as any).where(where).orderBy(desc(t.createdAt)).limit(q.pageSize).offset((q.page - 1) * q.pageSize),
+      this.db.select({ count: sql<number>`count(*)::int` }).from(t).where(where),
+    ]);
+    return { items: items as any[], total: count[0]?.count ?? 0 };
+  }
+
+  async getListing(kind: ListingKind, tenantId: string | null, id: string) {
+    const t = this.listingTable(kind);
+    const [row] = await this.db.select().from(t).where(this.listingScope(kind, tenantId, id)).limit(1);
+    return (row as any) ?? null;
+  }
+
+  async updateListing(kind: ListingKind, tenantId: string | null, id: string, patch: UpdateListingInput) {
+    const t = this.listingTable(kind);
+    const allowed = AdminOperationsRepository.EDITABLE[kind];
+    const values: Record<string, unknown> = {};
+    for (const key of allowed) if (patch[key] !== undefined) values[key] = patch[key];
+    if (Object.keys(values).length === 0) return "nothing" as const;
+    if (values.status === "published" && "publishedAt" in t) values.publishedAt = new Date();
+    const [row] = await this.db
+      .update(t)
+      .set({ ...values, updatedAt: new Date() })
+      .where(this.listingScope(kind, tenantId, id))
+      .returning();
+    return (row as any) ?? null;
+  }
+
+  async softDeleteListing(kind: ListingKind, tenantId: string | null, id: string) {
+    const t = this.listingTable(kind);
+    const [row] = await this.db
+      .update(t)
+      .set({ deletedAt: new Date(), ...(AdminOperationsRepository.HAS_STATUS[kind] ? { status: "archived" } : {}), updatedAt: new Date() })
+      .where(this.listingScope(kind, tenantId, id))
+      .returning();
+    return (row as any) ?? null;
+  }
+
+  /** Brings a soft-deleted listing back as a draft (never straight to published) so it can be reviewed first. */
+  async restoreListing(kind: ListingKind, tenantId: string | null, id: string) {
+    const t = this.listingTable(kind);
+    const [row] = await this.db
+      .update(t)
+      .set({ deletedAt: null, ...(AdminOperationsRepository.HAS_STATUS[kind] ? { status: "draft" } : {}), updatedAt: new Date() })
+      .where(this.listingScope(kind, tenantId, id, true))
+      .returning();
+    return (row as any) ?? null;
   }
 }

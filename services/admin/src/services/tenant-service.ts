@@ -152,6 +152,23 @@ export class TenantService {
     return updated!;
   }
 
+  /** Reversible removal: the tenant is locked out like a suspended one but is listed as archived and keeps all its data. */
+  async archiveTenant(id: string, reason: string | undefined, actorUserId: string) {
+    const existing = await this.tenants.findById(id);
+    if (!existing) throw new NotFoundError("Tenant");
+    if (existing.status === "cancelled") throw new ConflictError("This tenant is already archived");
+    const updated = await this.tenants.archive(id, reason);
+    await this.ops.writeAuditLog({
+      tenantId: null,
+      actorUserId,
+      action: "tenant.archived",
+      resourceType: "tenant",
+      resourceId: id,
+      metadata: reason ? { reason } : undefined,
+    });
+    return updated!;
+  }
+
   async reactivateTenant(id: string, actorUserId: string) {
     const existing = await this.tenants.findById(id);
     if (!existing) throw new NotFoundError("Tenant");
@@ -346,8 +363,8 @@ export class TenantService {
   async hardDelete(tenantId: string, expectedSlug: string, actorUserId: string) {
     const tenant = await this.tenants.findById(tenantId);
     if (!tenant) throw new NotFoundError("Tenant");
-    if (tenant.status !== "suspended") {
-      throw new ConflictError("Suspend this tenant before permanently deleting it");
+    if (tenant.status !== "suspended" && tenant.status !== "cancelled") {
+      throw new ConflictError("Archive or suspend this tenant before permanently deleting it");
     }
     if (tenant.slug !== expectedSlug) {
       throw new ConflictError("Confirmation slug does not match this tenant");

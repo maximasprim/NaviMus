@@ -2,7 +2,9 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import {
+  adminCreateUserSchema,
   adminLoginSchema,
+  adminUpdateUserSchema,
   loginSchema,
   refreshTokenSchema,
   registerSchema,
@@ -12,7 +14,7 @@ import {
 } from "@travel/validation";
 import { ok, paginated } from "@travel/http";
 import { clearSessionCookies, isCookieMode, readRefreshCookie, requireAuth, requirePermissions, setSessionCookies } from "@travel/auth";
-import { AuthenticationError } from "@travel/types";
+import { AuthenticationError, AuthorizationError, NotFoundError, ValidationError } from "@travel/types";
 import type { AuthService } from "./services/auth-service.js";
 import type { UserRepository } from "./repositories/user-repository.js";
 
@@ -20,6 +22,9 @@ const adminListUsersSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
   search: z.string().optional(),
+  status: z.enum(["active", "suspended", "deactivated"]).optional(),
+  tenantId: z.string().uuid().optional(),
+  deleted: z.enum(["true", "false"]).default("false"),
 });
 const adminSetUserStatusSchema = z.object({ status: z.enum(["active", "suspended", "deactivated"]) });
 const adminSetUserRoleSchema = z.object({ role: z.string().min(1) });
@@ -102,7 +107,9 @@ export function buildAuthRoutes(authService: AuthService, users: UserRepository,
     const user = await users.findById(authUser.sub);
     if (!user) return ok(c, null);
     const { passwordHash, mfaSecret, ...safe } = user;
-    return ok(c, safe);
+    // roles/permissions come from the verified access token - exactly what the API's own guards check - so the
+    // admin console can show each person only the menus their role can actually use. Additive: existing fields unchanged.
+    return ok(c, { ...safe, roles: authUser.roles, permissions: authUser.permissions });
   });
 
   // Always returns 200 regardless of whether the email exists - see
@@ -135,29 +142,105 @@ export function buildAuthRoutes(authService: AuthService, users: UserRepository,
   });
 
   // --- Admin: user management (spec sections 27 & 44) ---
-  // A super_admin sees/manages users across every tenant (tenantId -> null,
-  // no filter); a tenant-scoped admin is restricted to their own tenant -
-  // resolved from the request's tenant context, which enforceTenantMatch
-  // (mounted at the gateway) already guarantees matches their own token.
+  // A super_admin sees/manages users across every tenant; a tenant-scoped admin is restricted to their own
+  // tenant (resolved from the request's tenant context, which enforceTenantMatch at the gateway already
+  // guarantees matches their own token). Every change is written to the audit log.
+  /** The :id path segment as a string. (Hono can't infer it through these guard middlewares, so it types as string | undefined.) */
+  function idParam(c: any): string {
+    const id = c.req.param("id") as string | undefined;
+    if (!id) throw new ValidationError("Missing id");
+    return id;
+  }
+  const isPlatformAdmin = (c: any): boolean => c.get("authUser").roles.includes("super_admin");
+
+  /** Loads the target user (404 if outside the caller's reach) and refuses a tenant admin touching a platform admin. */
+  async function loadManageable(c: any, id: string) {
+    const target = await users.getDetail(id, isPlatformAdmin(c) ? null : c.get("tenantId"));
+    if (!target) throw new NotFoundError("User");
+    if (target.roles.includes("super_admin") && !isPlatformAdmin(c)) {
+      throw new AuthorizationError("Only a platform admin can change a platform admin");
+    }
+    return target;
+  }
+  function refuseSelf(c: any, id: string, what: string) {
+    if (c.get("authUser").sub === id) throw new ValidationError(`You can't ${what} your own account`);
+  }
+
   app.get("/admin/users", requireAuth, requirePermissions("user:manage"), zValidator("query", adminListUsersSchema), async (c) => {
-    const { page, pageSize, search } = c.req.valid("query");
-    const authUser = c.get("authUser");
-    const tenantId = authUser.roles.includes("super_admin") ? null : c.get("tenantId");
-    const { items, total } = await users.listAll(tenantId, page, pageSize, search);
+    const { page, pageSize, search, status, tenantId: tenantFilter, deleted } = c.req.valid("query");
+    const platform = isPlatformAdmin(c);
+    // Platform admin: every tenant, or one when asked. Tenant admin: always only their own.
+    const tenantId = platform ? tenantFilter ?? null : c.get("tenantId");
+    const { items, total } = await users.listAll(tenantId, page, pageSize, search, status, deleted === "true");
     return paginated(c, items, page, pageSize, total);
+  });
+
+  app.post("/admin/users", requireAuth, requirePermissions("user:manage"), zValidator("json", adminCreateUserSchema), async (c) => {
+    const input = c.req.valid("json");
+    const authUser = c.get("authUser");
+    const platform = isPlatformAdmin(c);
+    const tenantId = platform && input.tenantId ? input.tenantId : c.get("tenantId");
+    const result = await runPrivileged(() =>
+      authService.adminCreateUser(tenantId, input, { userId: authUser.sub, isPlatformAdmin: platform })
+    );
+    return ok(c, result, undefined, 201);
   });
 
   app.get("/admin/users/:id", requireAuth, requirePermissions("user:manage"), async (c) => {
     const id = c.req.param("id");
     if (!id) return c.json({ success: false, error: { code: "VALIDATION_ERROR", message: "Missing id" } }, 400);
-    const authUser = c.get("authUser");
-    const user = authUser.roles.includes("super_admin")
-      ? await users.findById(id)
-      : await users.findByIdForTenant(id, c.get("tenantId"));
-    if (!user) return c.json({ success: false, error: { code: "NOT_FOUND", message: "User not found" } }, 404);
-    const { passwordHash, mfaSecret, ...safe } = user;
-    const roles = await users.getRoleNames(id);
-    return ok(c, { ...safe, roles });
+    const detail = await users.getDetail(id, isPlatformAdmin(c) ? null : c.get("tenantId"));
+    if (!detail) return c.json({ success: false, error: { code: "NOT_FOUND", message: "User not found" } }, 404);
+    return ok(c, detail);
+  });
+
+  app.patch("/admin/users/:id", requireAuth, requirePermissions("user:manage"), zValidator("json", adminUpdateUserSchema), async (c) => {
+    const id = idParam(c);
+    const patch = c.req.valid("json");
+    const target = await loadManageable(c, id);
+    if (patch.email && patch.email !== target.email) {
+      const clash = await users.findByEmail(target.tenantId, patch.email);
+      if (clash && clash.id !== id) throw new ValidationError("Another account in this tenant already uses that email");
+    }
+    await users.updateProfile(id, target.tenantId, patch);
+    await users.writeAudit({
+      tenantId: target.tenantId,
+      actorUserId: c.get("authUser").sub,
+      action: "user.updated",
+      resourceId: id,
+      metadata: { fields: Object.keys(patch) },
+    });
+    return ok(c, { message: "User updated" });
+  });
+
+  app.delete("/admin/users/:id", requireAuth, requirePermissions("user:manage"), async (c) => {
+    const id = idParam(c);
+    refuseSelf(c, id, "delete");
+    const target = await loadManageable(c, id);
+    await users.softDelete(id, target.tenantId);
+    await users.writeAudit({
+      tenantId: target.tenantId,
+      actorUserId: c.get("authUser").sub,
+      action: "user.deleted",
+      resourceId: id,
+      metadata: { email: target.email },
+    });
+    return ok(c, { message: "User deleted" });
+  });
+
+  app.post("/admin/users/:id/restore", requireAuth, requirePermissions("user:manage"), async (c) => {
+    const id = idParam(c);
+    const gone = await users.findDeletedTenant(id, isPlatformAdmin(c) ? null : c.get("tenantId"));
+    if (!gone) throw new NotFoundError("Deleted user");
+    await users.restore(id, gone.tenantId);
+    await users.writeAudit({
+      tenantId: gone.tenantId,
+      actorUserId: c.get("authUser").sub,
+      action: "user.restored",
+      resourceId: id,
+      metadata: { email: gone.email },
+    });
+    return ok(c, { message: "User restored (suspended until you reactivate them)" });
   });
 
   app.patch(
@@ -166,15 +249,18 @@ export function buildAuthRoutes(authService: AuthService, users: UserRepository,
     requirePermissions("user:manage"),
     zValidator("json", adminSetUserStatusSchema),
     async (c) => {
-      const { id } = c.req.param();
+      const id = idParam(c);
       const { status } = c.req.valid("json");
-      const authUser = c.get("authUser");
-      const tenantId = authUser.roles.includes("super_admin")
-        ? (await users.findById(id))?.tenantId
-        : c.get("tenantId");
-      if (!tenantId) return c.json({ success: false, error: { code: "NOT_FOUND", message: "User not found" } }, 404);
-      const changed = await users.setStatus(id, tenantId, status);
+      if (status !== "active") refuseSelf(c, id, "suspend or deactivate");
+      const target = await loadManageable(c, id);
+      const changed = await users.setStatus(id, target.tenantId, status);
       if (!changed) return c.json({ success: false, error: { code: "NOT_FOUND", message: "User not found" } }, 404);
+      await users.writeAudit({
+        tenantId: target.tenantId,
+        actorUserId: c.get("authUser").sub,
+        action: `user.${status}`,
+        resourceId: id,
+      });
       return ok(c, { message: "User status updated" });
     }
   );
@@ -185,15 +271,21 @@ export function buildAuthRoutes(authService: AuthService, users: UserRepository,
     requirePermissions("user:manage"),
     zValidator("json", adminSetUserRoleSchema),
     async (c) => {
-      const { id } = c.req.param();
+      const id = idParam(c);
       const { role } = c.req.valid("json");
-      const authUser = c.get("authUser");
-      const tenantId = authUser.roles.includes("super_admin")
-        ? (await users.findById(id))?.tenantId
-        : c.get("tenantId");
-      if (!tenantId) return c.json({ success: false, error: { code: "NOT_FOUND", message: "User not found" } }, 404);
-      const changed = await users.setRole(id, tenantId, role);
+      // Without this a tenant admin could promote anyone (themselves included) to platform admin.
+      if (role === "super_admin" && !isPlatformAdmin(c)) throw new AuthorizationError("Only a platform admin can grant platform admin");
+      refuseSelf(c, id, "change the role of");
+      const target = await loadManageable(c, id);
+      const changed = await users.setRole(id, target.tenantId, role);
       if (!changed) return c.json({ success: false, error: { code: "NOT_FOUND", message: "Role not found" } }, 404);
+      await users.writeAudit({
+        tenantId: target.tenantId,
+        actorUserId: c.get("authUser").sub,
+        action: "user.role_changed",
+        resourceId: id,
+        metadata: { from: target.roles, to: role },
+      });
       return ok(c, { message: "Role updated" });
     }
   );
