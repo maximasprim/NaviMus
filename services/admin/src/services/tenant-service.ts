@@ -1,5 +1,5 @@
 import { ConflictError, NotFoundError } from "@travel/types";
-import type { CreateTenantInput, UpdateTenantInput } from "@travel/validation";
+import type { CreatePlanInput, CreateTenantInput, UpdatePlanInput, UpdateTenantInput } from "@travel/validation";
 import { AuthService } from "@travel/service-auth/internal";
 import { getTenantUsageSnapshot, type Database } from "@travel/database";
 import { isEntitled } from "../billing/subscription-sync.js";
@@ -301,6 +301,67 @@ export class TenantService {
   // --- Plans (spec: multi-tenancy Phase 5 billing) ---
   async listPlans(activeOnly = false) {
     return this.tenants.listPlans(activeOnly);
+  }
+
+  /** The commission rate used for this tenant's bookings: its own override if the platform set one, else the platform default. */
+  async getTenantCommission(tenantId: string) {
+    const [override, platformDefault] = await Promise.all([
+      this.ops.getSystemSettingValue(tenantId, "platform_commission_percent"),
+      this.ops.getSystemSettingValue(null, "platform_commission_percent"),
+    ]);
+    const num = (v: unknown) => (v !== null && v !== undefined && Number.isFinite(Number(v)) ? Number(v) : null);
+    return { overridePercent: num(override), platformDefaultPercent: num(platformDefault) ?? 10 };
+  }
+
+  /** Sets (or, with null, removes) a tenant's own commission rate. Platform admin only (enforced at the route layer). */
+  async setTenantCommission(tenantId: string, percent: number | null, actorUserId: string) {
+    const tenant = await this.tenants.findById(tenantId);
+    if (!tenant) throw new NotFoundError("Tenant");
+    if (percent === null) await this.ops.deleteSystemSetting(tenantId, "platform_commission_percent");
+    else await this.ops.upsertSystemSetting(tenantId, "platform_commission_percent", percent, "Platform commission for this tenant");
+    await this.ops.writeAuditLog({ tenantId: null, actorUserId, action: "tenant.commission_set", resourceType: "tenant", resourceId: tenantId, metadata: { percent } });
+    return this.getTenantCommission(tenantId);
+  }
+
+  async createPlan(input: CreatePlanInput, actorUserId: string) {
+    if (await this.tenants.findPlanByCode(input.code)) throw new ConflictError(`A plan with the code "${input.code}" already exists`);
+    const plan = await this.tenants.createPlan({
+      code: input.code,
+      name: input.name,
+      description: input.description ?? null,
+      monthlyPriceUsd: input.monthlyPriceUsd,
+      maxOperators: input.maxOperators ?? null,
+      maxStaffUsers: input.maxStaffUsers ?? null,
+      maxBookingsPerMonth: input.maxBookingsPerMonth ?? null,
+      commissionRatePercent: input.commissionRatePercent ?? null,
+      isActive: input.isActive ?? true,
+    });
+    await this.ops.writeAuditLog({ tenantId: null, actorUserId, action: "plan.created", resourceType: "plan", resourceId: plan.id, metadata: { code: plan.code } });
+    return plan;
+  }
+
+  /**
+   * Edits a plan. Changing the price of a plan that is mapped to a Stripe price UNMAPS it: the old Stripe price
+   * would keep billing the old amount, so new purchases stay closed until a matching price is mapped again.
+   * Tenants already subscribed keep what they pay in Stripe.
+   */
+  async updatePlan(planId: string, input: UpdatePlanInput, actorUserId: string) {
+    const existing = await this.tenants.findPlanById(planId);
+    if (!existing) throw new NotFoundError("Plan");
+    const values: Record<string, unknown> = { ...input };
+    const priceChanged = input.monthlyPriceUsd !== undefined && Number(input.monthlyPriceUsd) !== Number(existing.monthlyPriceUsd);
+    const unmapped = priceChanged && !!existing.stripePriceId;
+    if (unmapped) values.stripePriceId = null;
+    const plan = await this.tenants.updatePlan(planId, values);
+    await this.ops.writeAuditLog({
+      tenantId: null,
+      actorUserId,
+      action: "plan.updated",
+      resourceType: "plan",
+      resourceId: planId,
+      metadata: { fields: Object.keys(input), stripePriceUnmapped: unmapped },
+    });
+    return { plan: plan!, stripePriceUnmapped: unmapped };
   }
 
   /** The tenant's own "Usage & Billing" screen - current plan, live usage, and which limits (if any) are currently maxed out. */

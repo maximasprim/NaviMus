@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { getOperatorOverview, getUserOverview, listAllSupportTickets, listTenantBillingEvents, type AdminSupportTicket, type OperatorOverview, type UserOverview } from "@/lib/api";
+import { getOperatorOverview, getTenantBilling, getUserOverview, setTenantCommission, listAllSupportTickets, listTenantBillingEvents, type AdminSupportTicket, type BillingOverview, type OperatorOverview, type UserOverview } from "@/lib/api";
 import { getToken } from "@/lib/session";
 import { Card, StatusBadge } from "@/components/detail-ui";
 import { money } from "@/components/pager";
@@ -209,5 +209,67 @@ export function UserTickets({ userId }: { userId: string }) {
         </ul>
       )}
     </Card>
+  );
+}
+
+const fmtLimit = (n: number | null) => (n === null ? "unlimited" : String(n));
+
+/** One tenant's billing picture for the platform admin: plan, subscription state and usage against limits. */
+export function TenantBillingSummary({ tenantId }: { tenantId: string }) {
+  const [b, setB] = useState<(BillingOverview & { commission: { overridePercent: number | null; platformDefaultPercent: number } }) | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const reload = () => getTenantBilling(getToken()!, tenantId).then(setB).catch(() => setFailed(true));
+  useEffect(() => {
+    reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId]);
+  if (failed) return null;
+  if (!b) return null;
+  const s = b.subscription;
+  async function editCommission() {
+    const cur = b!.commission.overridePercent;
+    const input = window.prompt(`Commission % this tenant pays on its bookings (platform default is ${b!.commission.platformDefaultPercent}%). Leave empty to use the default.`, cur === null ? "" : String(cur));
+    if (input === null) return;
+    const n = input.trim() === "" ? null : Number(input);
+    if (n !== null && (!Number.isFinite(n) || n < 0 || n > 100)) {
+      setErr("Enter a number from 0 to 100.");
+      return;
+    }
+    setErr(null);
+    try {
+      await setTenantCommission(getToken()!, tenantId, n);
+      await reload();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Could not save.");
+    }
+  }
+  return (
+    <Card title="Billing">
+      <dl>
+        <KVRow label="Plan">{b.plan.planName ?? "No plan (unlimited)"}</KVRow>
+        <KVRow label="Subscription">{s.status ? <StatusBadge value={s.status} /> : "None (not paying through Stripe)"}</KVRow>
+        {s.currentPeriodEnd && <KVRow label={s.cancelAtPeriodEnd ? "Ends on" : "Renews on"}>{new Date(s.currentPeriodEnd).toLocaleDateString()}</KVRow>}
+        {s.paymentProblem && <KVRow label="Payment">Last payment failed (Stripe is retrying)</KVRow>}
+        <KVRow label="Bookings this month">{b.usage.bookingsThisMonth} / {fmtLimit(b.plan.maxBookingsPerMonth)}</KVRow>
+        <KVRow label="Active operators">{b.usage.activeOperators} / {fmtLimit(b.plan.maxOperators)}</KVRow>
+        <KVRow label="Staff users">{b.usage.staffUsers} / {fmtLimit(b.plan.maxStaffUsers)}</KVRow>
+        <KVRow label="Commission on bookings">
+          {b.commission.overridePercent === null ? `${b.commission.platformDefaultPercent}% (platform default)` : `${b.commission.overridePercent}% (set for this tenant)`}
+          <button onClick={editCommission} className="ml-3 text-xs text-acacia underline">Change</button>
+        </KVRow>
+      </dl>
+      {err && <p className="mt-2 text-sm text-plum">{err}</p>}
+      {s.status && s.status !== "canceled" && <p className="mt-3 text-xs text-ink/50">This tenant pays through Stripe, so its plan follows the subscription. To change it by hand, cancel the subscription in Stripe first.</p>}
+    </Card>
+  );
+}
+
+function KVRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex justify-between gap-4 border-b border-ink-horizon/5 py-2 text-sm last:border-0">
+      <dt className="text-ink/50">{label}</dt>
+      <dd className="text-right text-ink-horizon">{children}</dd>
+    </div>
   );
 }

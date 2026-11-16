@@ -7,6 +7,8 @@ import {
   suspendTenantSchema,
   updateTenantSchema,
   assignPlanSchema,
+  createPlanSchema,
+  updatePlanSchema,
   hardDeleteTenantSchema,
 } from "@travel/validation";
 import { ok, paginated } from "@travel/http";
@@ -103,6 +105,28 @@ export function buildPlatformRoutes(service: TenantService, db: Database, billin
 
   // Maps a plan to its Stripe price. Verified against Stripe (active, monthly,
   // USD, exactly the plan's price) before it is stored - see BillingService.
+  app.post("/plans", zValidator("json", createPlanSchema), async (c) => {
+    const authUser = c.get("authUser");
+    return ok(c, await service.createPlan(c.req.valid("json"), authUser.sub), undefined, 201);
+  });
+
+  app.patch("/plans/:id", zValidator("json", updatePlanSchema), async (c) => {
+    const authUser = c.get("authUser");
+    return ok(c, await service.updatePlan(requireParam(c, "id"), c.req.valid("json"), authUser.sub));
+  });
+
+  // Any tenant's billing picture (plan, subscription state, usage vs limits) for the platform admin.
+  app.get("/tenants/:id/billing", async (c) => {
+    const id = requireParam(c, "id");
+    return ok(c, { ...(await billing.getOverview(id)), commission: await service.getTenantCommission(id) });
+  });
+
+  // The tenant's own commission rate on its bookings. null removes the override (back to the platform default).
+  app.put("/tenants/:id/commission", zValidator("json", z.object({ percent: z.number().min(0).max(100).nullable() })), async (c) => {
+    const authUser = c.get("authUser");
+    return ok(c, await service.setTenantCommission(requireParam(c, "id"), c.req.valid("json").percent, authUser.sub));
+  });
+
   app.patch(
     "/plans/:id/stripe-price",
     zValidator("json", z.object({ stripePriceId: z.string().regex(/^price_[A-Za-z0-9]+$/, "must look like price_xxx").nullable() })),

@@ -63,6 +63,40 @@ export const assignPlanSchema = z.object({
 });
 export type AssignPlanInput = z.infer<typeof assignPlanSchema>;
 
+const planLimit = z.number().int().min(0).max(1_000_000).nullable(); // null = unlimited
+const planFields = {
+  name: z.string().trim().min(2).max(100),
+  description: z.string().trim().max(1000).nullable(),
+  monthlyPriceUsd: z
+    .number()
+    .min(0)
+    .max(100_000)
+    .transform((n) => n.toFixed(2)),
+  maxOperators: planLimit,
+  maxStaffUsers: planLimit,
+  maxBookingsPerMonth: planLimit,
+  commissionRatePercent: z
+    .number()
+    .min(0)
+    .max(100)
+    .transform((n) => n.toFixed(2))
+    .nullable(),
+  isActive: z.boolean(),
+};
+export const createPlanSchema = z.object({
+  code: z.string().trim().toLowerCase().regex(/^[a-z][a-z0-9_]{1,29}$/, "Use 2-30 lowercase letters, numbers or underscores"),
+  ...planFields,
+  description: planFields.description.optional(),
+  maxOperators: planLimit.optional(),
+  maxStaffUsers: planLimit.optional(),
+  maxBookingsPerMonth: planLimit.optional(),
+  commissionRatePercent: planFields.commissionRatePercent.optional(),
+  isActive: z.boolean().optional(),
+});
+export type CreatePlanInput = z.infer<typeof createPlanSchema>;
+export const updatePlanSchema = z.object(planFields).partial().refine((v) => Object.keys(v).length > 0, { message: "Nothing to update" });
+export type UpdatePlanInput = z.infer<typeof updatePlanSchema>;
+
 export const hardDeleteTenantSchema = z.object({
   confirmSlug: z.string().min(1),
 });

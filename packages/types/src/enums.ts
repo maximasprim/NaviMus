@@ -142,6 +142,8 @@ export type NotificationChannel = (typeof NOTIFICATION_CHANNELS)[number];
 export const LEDGER_ENTRY_TYPES = [
   "customer_payment",
   "platform_fee",
+  // The tour company's (tenant's) own share of the commission charged to an operator, after the platform's fee.
+  "tenant_commission",
   "operator_earning",
   "refund",
   "cancellation_penalty",

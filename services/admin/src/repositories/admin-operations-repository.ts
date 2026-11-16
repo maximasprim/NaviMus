@@ -61,6 +61,16 @@ export class AdminOperationsRepository {
     return row!;
   }
 
+  async getSystemSettingValue(tenantId: string | null, key: string): Promise<unknown | null> {
+    const tenantCondition = tenantId ? eq(schema.systemSettings.tenantId, tenantId) : isNull(schema.systemSettings.tenantId);
+    const [row] = await this.db.select().from(schema.systemSettings).where(and(tenantCondition, eq(schema.systemSettings.key, key))).limit(1);
+    return row ? row.value : null;
+  }
+
+  async deleteSystemSetting(tenantId: string, key: string) {
+    await this.db.delete(schema.systemSettings).where(and(eq(schema.systemSettings.tenantId, tenantId), eq(schema.systemSettings.key, key)));
+  }
+
   /** tenantId null lists platform-wide defaults; a real id lists that tenant's own overrides. */
   async listSystemSettings(tenantId: string | null) {
     const tenantCondition = tenantId ? eq(schema.systemSettings.tenantId, tenantId) : isNull(schema.systemSettings.tenantId);

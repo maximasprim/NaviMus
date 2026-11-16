@@ -300,6 +300,15 @@ export class AuthService {
       throw new AuthenticationError("This account is not active");
     }
 
+    // Staff sessions end after an hour of inactivity. Each refresh issues a new token, so this token's age is the time
+    // since the session was last renewed - which an active staff member's app does every few minutes.
+    const { roles } = await this.users.getRolesAndPermissions(user.id);
+    const isStaff = roles.some((r) => r !== "customer");
+    if (isStaff && Date.now() - row.createdAt.getTime() > ttlToSeconds(env.STAFF_SESSION_IDLE_TTL) * 1000) {
+      await this.refreshTokens.revokeFamily(row.family);
+      throw new AuthenticationError("You were signed out after a period of inactivity. Please sign in again.");
+    }
+
     // Claim the rotation atomically: if a concurrent refresh already did, we lose.
     if (!(await this.refreshTokens.revokeIfActive(row.id))) throw expired();
     return this.issueTokens(user.id, user.tenantId, user.email, row.family);

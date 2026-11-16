@@ -12,7 +12,6 @@ import { UsageBillingSection } from "@/components/usage-billing-section";
 // (system_settings table), not a dedicated form per concern, so any
 // key works; these are just a starting point shown as quick-add chips.
 const SUGGESTED_KEYS = [
-  "platform_commission_percentage",
   "default_currency",
   "supported_currencies",
   "mpesa_enabled",

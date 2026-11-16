@@ -183,6 +183,25 @@ export class TenantRepository {
     return row ?? null;
   }
 
+  async findPlanByCode(code: string) {
+    const [row] = await this.db.select().from(schema.plans).where(eq(schema.plans.code, code)).limit(1);
+    return row ?? null;
+  }
+
+  async createPlan(values: typeof schema.plans.$inferInsert) {
+    const [row] = await this.db.insert(schema.plans).values(values).returning();
+    return row!;
+  }
+
+  async updatePlan(planId: string, values: Partial<typeof schema.plans.$inferInsert>) {
+    const [row] = await this.db
+      .update(schema.plans)
+      .set({ ...values, updatedAt: new Date() })
+      .where(eq(schema.plans.id, planId))
+      .returning();
+    return row ?? null;
+  }
+
   async assignPlan(tenantId: string, planId: string | null) {
     const [row] = await this.db
       .update(schema.tenants)

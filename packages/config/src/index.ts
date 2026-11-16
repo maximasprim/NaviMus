@@ -66,6 +66,9 @@ const envSchema = z
   JWT_REFRESH_SECRET: z.string().min(32, "JWT_REFRESH_SECRET must be at least 32 characters"),
   JWT_ACCESS_TTL: z.string().default("15m"),
   JWT_REFRESH_TTL: z.string().default("30d"),
+  // Staff (anyone who is not just a customer) are signed out after this long without a session refresh. Active staff's apps
+  // refresh at least every ~20 minutes, so this is, in effect, an inactivity timeout enforced on the server.
+  STAFF_SESSION_IDLE_TTL: z.string().default("1h"),
 
   MPESA_CONSUMER_KEY: z.string().optional(),
   MPESA_CONSUMER_SECRET: z.string().optional(),

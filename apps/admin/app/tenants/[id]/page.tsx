@@ -18,7 +18,7 @@ import {
   type PlanInfo,
   type TenantWithStats,
 } from "@/lib/api";
-import { TenantBilling } from "@/components/related-lists";
+import { TenantBilling, TenantBillingSummary } from "@/components/related-lists";
 import { getToken } from "@/lib/session";
 import { setSelectedTenant } from "@/lib/tenant-session";
 import { Btn, Card, Field, KV, Modal, Notice, PageHeader, Stat, StatusBadge, errMsg, inputCls } from "@/components/detail-ui";
@@ -238,7 +238,10 @@ export default function TenantDetailPage({ params }: { params: { id: string } })
         </div>
       )}
 
-      <TenantBilling tenantId={tenant.id} />
+      <div className="mt-6 grid gap-4 lg:grid-cols-2">
+        <TenantBillingSummary tenantId={tenant.id} />
+        <TenantBilling tenantId={tenant.id} />
+      </div>
 
       {editing && (
         <Modal title="Edit tenant" onClose={() => setEditing(false)}>

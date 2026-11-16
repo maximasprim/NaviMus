@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, schema, withPlatformRLSBypass, withTenantRLS, type Database } from "@travel/database";
+import { and, eq, getTenantPlanLimits, schema, withPlatformRLSBypass, withTenantRLS, type Database } from "@travel/database";
 import { BookingError, ConflictError, NotFoundError, PaymentError, ValidationError } from "@travel/types";
 import { transitionBookingStatus } from "@travel/service-bookings/internal";
 import { EventPublisher } from "@travel/events";
@@ -305,8 +305,18 @@ export class PaymentService {
       }
     }
 
-    const platformFee = Math.round(amount * (commissionPercent / 100) * 100) / 100;
-    const operatorEarning = Math.round((amount - platformFee) * 100) / 100;
+    // Who keeps the commission. The operator is charged `commissionPercent` (its own rate, else the tenant's or the
+    // platform default). If the tenant's plan sets a platform rate, the PLATFORM keeps that rate of the booking and
+    // the TENANT keeps the rest of the commission; the operator can never be charged less than the platform's rate.
+    // A plan with no rate keeps the original behaviour: the platform keeps the whole commission.
+    const planPercent = (await getTenantPlanLimits(this.db, booking.tenantId)).commissionRatePercent;
+    const chargedPercent = planPercent !== null ? Math.max(commissionPercent, planPercent) : commissionPercent;
+    const platformPercent = planPercent !== null ? planPercent : chargedPercent;
+    const round2 = (n: number) => Math.round(n * 100) / 100;
+    const commissionTotal = round2(amount * (chargedPercent / 100));
+    const platformFee = round2(amount * (platformPercent / 100));
+    const tenantCommission = round2(commissionTotal - platformFee);
+    const operatorEarning = round2(amount - commissionTotal);
 
     await this.payments.postLedgerEntryTx(tx, {
       bookingId: booking.id,
@@ -322,8 +332,18 @@ export class PaymentService {
       entryType: "platform_fee",
       amount: -platformFee,
       currency: booking.currency,
-      description: `Platform commission (${commissionPercent}%)`,
+      description: `Platform fee (${platformPercent}%)`,
     });
+    if (tenantCommission > 0) {
+      await this.payments.postLedgerEntryTx(tx, {
+        bookingId: booking.id,
+        paymentId,
+        entryType: "tenant_commission",
+        amount: -tenantCommission,
+        currency: booking.currency,
+        description: `Tenant commission (${round2(chargedPercent - platformPercent)}%)`,
+      });
+    }
     await this.payments.postLedgerEntryTx(tx, {
       bookingId: booking.id,
       paymentId,

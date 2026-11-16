@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
+import { IdleSessionGuard } from "./idle-session-guard";
 import { RouteGuard } from "./route-guard";
 
 /** Public pages for people who are not signed in yet: no sidebar, just the page. */
@@ -47,6 +48,7 @@ export function AppShell({ sidebar, children }: { sidebar: ReactNode; children: 
         <RouteGuard>
           {matches(pathname, FULL_BLEED) ? children : <div className="mx-auto max-w-8xl px-3 py-4">{children}</div>}
         </RouteGuard>
+        <IdleSessionGuard />
       </div>
     </div>
   );

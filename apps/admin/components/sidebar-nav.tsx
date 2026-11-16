@@ -8,7 +8,7 @@ import { ROUTE_RULES } from "@/lib/access-rules";
 
 type IconName =
   | "dashboard" | "tenants" | "operators" | "users" | "approvals" | "bookings" | "support"
-  | "payments" | "invoices" | "reviews" | "promotions"
+  | "billing" | "plans" | "payments" | "invoices" | "reviews" | "promotions"
   | "listings" | "moderation" | "audit" | "reference" | "templates" | "policies" | "settings" | "site";
 
 /** 24x24 line icons, drawn inline so the admin app needs no icon dependency. */
@@ -21,6 +21,8 @@ const ICONS: Record<IconName, ReactNode> = {
   bookings: (<><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M3 10h18M8 3v4M16 3v4" /></>),
   support: (<path d="M4 5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1h-9l-5 4v-4H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z" />),
   listings: (<><path d="M4 6h16M4 12h16M4 18h10" /><circle cx="19" cy="18" r="1.5" /></>),
+  billing: (<><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 10h18M15 15h3" /></>),
+  plans: (<><path d="M4 19V9M10 19V5M16 19v-7M22 19H2" /></>),
   payments: (<><rect x="3" y="6" width="18" height="12" rx="2" /><path d="M3 10h18M7 15h3" /></>),
   invoices: (<><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z" /><path d="M9 8h6M9 12h6" /></>),
   reviews: (<path d="m12 3.5 2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.8-5.2 2.8 1-5.8-4.3-4.1 5.9-.9z" />),
@@ -35,7 +37,7 @@ const ICONS: Record<IconName, ReactNode> = {
 };
 
 /** Who sees each link comes from the shared ROUTE_RULES table (lib/access-rules.ts), the same one the route guard uses. */
-interface NavItem { href: string; label: string; icon: IconName }
+interface NavItem { href: string; label: string; icon: IconName; /** Hidden from the platform admin (it has no tenant of its own). */ tenantOnly?: boolean }
 interface NavGroup { heading?: string; items: NavItem[] }
 
 // Every route from the previous sidebar is still here - only grouped.
@@ -45,6 +47,7 @@ const GROUPS: NavGroup[] = [
     heading: "Platform",
     items: [
       { href: "/tenants", label: "Tenants", icon: "tenants" },
+      { href: "/plans", label: "Plans & pricing", icon: "plans" },
       { href: "/operators", label: "Operators", icon: "operators" },
       { href: "/users", label: "Users", icon: "users" },
       { href: "/approvals", label: "Approvals", icon: "approvals" },
@@ -63,6 +66,7 @@ const GROUPS: NavGroup[] = [
   {
     heading: "Commerce",
     items: [
+      { href: "/billing", label: "Billing", icon: "billing", tenantOnly: true },
       { href: "/payments", label: "Payments", icon: "payments" },
       { href: "/invoices", label: "Invoices", icon: "invoices" },
       { href: "/reviews", label: "Reviews", icon: "reviews" },
@@ -93,7 +97,7 @@ export function SidebarNav() {
   // Until we know who is signed in, show no role-specific menu (so a wrong one never flashes). If the server can't
   // say, `can` treats it as "allowed", which is how the console behaved before roles - the API still enforces.
   const groups = ready
-    ? GROUPS.map((g) => ({ ...g, items: g.items.filter((i) => can(access, ROUTE_RULES[i.href])) })).filter((g) => g.items.length > 0)
+    ? GROUPS.map((g) => ({ ...g, items: g.items.filter((i) => can(access, ROUTE_RULES[i.href]) && !(i.tenantOnly && access?.roles.includes("super_admin"))) })).filter((g) => g.items.length > 0)
     : [];
   // Only the platform admin works at platform level; everyone else sees these as ordinary "Management" links.
   const isPlatform = !access || access.roles.includes("super_admin");

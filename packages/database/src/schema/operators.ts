@@ -17,7 +17,7 @@ export const operators = pgTable(
     contactPhone: varchar("contact_phone", { length: 32 }),
     countryId: uuid("country_id"),
     description: text("description"),
-    commissionRatePercent: varchar("commission_rate_percent", { length: 10 }).default("10.00"),
+    commissionRatePercent: varchar("commission_rate_percent", { length: 10 }), // null = use the tenant rate, then the platform default
     approvedByUserId: uuid("approved_by_user_id").references(() => users.id),
     approvedAt: timestamp("approved_at", { withTimezone: true }),
     ...timestampColumns,

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
+import { IdleSessionGuard } from "./idle-session-guard";
 import { RouteGuard } from "./route-guard";
 
 /** Pages a signed-out visitor can see. They get no sidebar or menus - only the page itself. */
@@ -41,6 +42,7 @@ export function AppShell({ sidebar, children }: { sidebar: ReactNode; children: 
       {sidebar}
       <div className="scroll-light min-w-0 flex-1 overflow-y-auto">
         <RouteGuard>{children}</RouteGuard>
+        <IdleSessionGuard />
       </div>
     </div>
   );

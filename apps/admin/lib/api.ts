@@ -255,7 +255,7 @@ export async function hardDeleteTenant(token: string, tenantId: string, confirmS
 
 export interface DashboardMetrics {
   bookings: { total: number; byStatus: Record<string, number> };
-  revenue: { grossRevenue: number; totalRefunds: number; platformFees: number };
+  revenue: { grossRevenue: number; totalRefunds: number; platformFees: number; tenantCommission?: number };
   customers: { newInRange: number };
   activeDestinations: number;
   activePackages: number;
@@ -1190,4 +1190,46 @@ export async function getMediaUrl(token: string, storageKey: string): Promise<st
   } catch {
     return null;
   }
+}
+
+// --- Plans and billing (platform admin) ---
+
+export interface PlanFull extends PlanInfo {
+  commissionRatePercent: string | null;
+  isActive: boolean;
+  stripePriceId: string | null;
+}
+export interface PlanInput {
+  code?: string;
+  name?: string;
+  description?: string | null;
+  monthlyPriceUsd?: number;
+  maxOperators?: number | null;
+  maxStaffUsers?: number | null;
+  maxBookingsPerMonth?: number | null;
+  commissionRatePercent?: number | null;
+  isActive?: boolean;
+}
+
+export async function createPlan(token: string, input: PlanInput & { code: string; name: string; monthlyPriceUsd: number }) {
+  const { data } = await apiFetch<PlanFull>("/api/v1/platform/plans", { method: "POST", token, body: input, includeTenant: false });
+  return data;
+}
+export async function updatePlan(token: string, id: string, input: PlanInput) {
+  const { data } = await apiFetch<{ plan: PlanFull; stripePriceUnmapped: boolean }>(`/api/v1/platform/plans/${id}`, { method: "PATCH", token, body: input, includeTenant: false });
+  return data;
+}
+export async function setPlanStripePrice(token: string, id: string, stripePriceId: string | null) {
+  const { data } = await apiFetch<PlanFull>(`/api/v1/platform/plans/${id}/stripe-price`, { method: "PATCH", token, body: { stripePriceId }, includeTenant: false });
+  return data;
+}
+/** Any tenant's billing picture: plan, subscription state, usage against limits. */
+export async function getTenantBilling(token: string, tenantId: string) {
+  const { data } = await apiFetch<BillingOverview & { commission: { overridePercent: number | null; platformDefaultPercent: number } }>(`/api/v1/platform/tenants/${tenantId}/billing`, { token, includeTenant: false });
+  return data;
+}
+
+export async function setTenantCommission(token: string, tenantId: string, percent: number | null) {
+  const { data } = await apiFetch<{ overridePercent: number | null; platformDefaultPercent: number }>(`/api/v1/platform/tenants/${tenantId}/commission`, { method: "PUT", token, body: { percent }, includeTenant: false });
+  return data;
 }

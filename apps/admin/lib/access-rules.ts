@@ -18,6 +18,8 @@ export const ROUTE_RULES: Record<string, AccessRule> = {
   "/support": { roles: ["admin", "customer_support"], permissions: ["support:manage"] },
   "/moderation": { roles: ["admin", "customer_support"] },
   "/listings": { roles: ["admin", "destination_manager", "travel_manager"] },
+  "/billing": { roles: ["admin"] },
+  "/plans": { roles: [] },
   "/payments": { roles: ["admin", "finance_manager"] },
   "/invoices": { roles: ["admin", "finance_manager"] },
   "/reviews": { roles: ["admin", "customer_support"] },

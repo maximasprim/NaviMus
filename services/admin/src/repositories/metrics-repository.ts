@@ -67,16 +67,18 @@ export class MetricsRepository {
       return Number(row?.total ?? 0);
     };
 
-    const [grossRevenue, totalRefunds, platformFees] = await Promise.all([
+    const [grossRevenue, totalRefunds, platformFees, tenantCommission] = await Promise.all([
       sumFor("customer_payment"),
       sumFor("refund"),
       sumFor("platform_fee"),
+      sumFor("tenant_commission"),
     ]);
 
     return {
       grossRevenue,
       totalRefunds: Math.abs(totalRefunds),
       platformFees: Math.abs(platformFees),
+      tenantCommission: Math.abs(tenantCommission),
     };
   }
 

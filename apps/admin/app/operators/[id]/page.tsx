@@ -171,7 +171,7 @@ export default function OperatorDetailPage({ params }: { params: { id: string } 
             <KV label="Contact email">{op.contactEmail}</KV>
             <KV label="Phone">{op.contactPhone}</KV>
             <KV label="Slug">{op.slug}</KV>
-            <KV label="Commission">{op.commissionRatePercent ? `${op.commissionRatePercent}%` : "-"}</KV>
+            <KV label="Commission">{op.commissionRatePercent ? `${op.commissionRatePercent}%` : "Default rate"}</KV>
             <KV label="Applied">{new Date(op.createdAt).toLocaleDateString()}</KV>
             <KV label="Approved">{op.approvedAt ? new Date(op.approvedAt).toLocaleDateString() : "-"}</KV>
           </dl>

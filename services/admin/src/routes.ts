@@ -21,7 +21,7 @@ import {
 } from "@travel/validation";
 import { ok, paginated } from "@travel/http";
 import { requireAuth, requireRoles } from "@travel/auth";
-import { NotFoundError } from "@travel/types";
+import { AuthorizationError, NotFoundError } from "@travel/types";
 import type { ListingKind } from "@travel/validation";
 import type { AdminService } from "./services/admin-service.js";
 import type { TenantService } from "./services/tenant-service.js";
@@ -38,6 +38,9 @@ function requireParam(c: any, name: string): string {
   if (!value) throw new NotFoundError(name);
   return value;
 }
+
+/** Settings only the platform admin may write. */
+const PLATFORM_ONLY_SETTING_KEYS = ["platform_commission_percent", "platform_commission_percentage"];
 
 export function buildAdminRoutes(service: AdminService, tenants: TenantService, billing: BillingService) {
   const app = new Hono();
@@ -135,6 +138,10 @@ export function buildAdminRoutes(service: AdminService, tenants: TenantService, 
     async (c) => {
       const authUser = c.get("authUser");
       const { key, value, description } = c.req.valid("json");
+      // What the platform charges is the platform's call: a tenant must not be able to set its own commission.
+      if (PLATFORM_ONLY_SETTING_KEYS.includes(key) && !authUser.roles.includes("super_admin")) {
+        throw new AuthorizationError("Only the platform administrator can change this setting");
+      }
       const setting = await service.updateSetting(scopeOrNull(c), key, value, authUser.sub, description);
       return ok(c, setting);
     }

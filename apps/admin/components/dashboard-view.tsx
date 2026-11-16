@@ -194,6 +194,14 @@ export function DashboardView({
                   {fmt(metrics.revenue.platformFees)}
                 </dd>
               </div>
+              {!!metrics.revenue.tenantCommission && (
+                <div>
+                  <dt className="text-fog">Commission kept</dt>
+                  <dd className="mt-1.5 text-lg font-semibold tabular-nums text-ink-horizon">
+                    {fmt(metrics.revenue.tenantCommission)}
+                  </dd>
+                </div>
+              )}
             </dl>
           </div>
           {series ? (
